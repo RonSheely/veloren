@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ability to ask NPCs for directions to nearby establishments.
 - Type /wiki to open or the Veloren wiki or /wiki [topic] to search for a specific topic.
 - Adding a space after chat mode commands changes chat modes.
+- New and more granular options for the `/kit` command.
 
 ### Changed
 
@@ -62,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Nerf npc aimbot.
 - Minor improvements to NPC pathfinding to reduce illogal pathing around obstacles.
 - Updated rat model.
+- Recipes now have relevant quality (colour) ratings.
 
 ### Removed
 
@@ -74,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Can no longer ride while dead.
 - Realignment of airship dock signs in forest towns.
 - Fixed rotation of Bloodmoon Relic.
-- Captains turning towards sounds or targets.
+- Captains no longer turn towards sounds or targets.
 - Soldier Crabs no longer spawn under the floor at Sahagin Island dungeons.
 - Minimap zooming can no longer exceed limits when zooming with hotkeys, making the behavious consistent for using the interface buttons or the hotkeys.
 - Fix "Uid was not mapped to any entity" errors
@@ -83,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed airship dock position.
 - Fixed throwables pickup sound.
 - Re-oriented LoD model for Haniwa Catacombs.
+- Made it easier to interact with sprites on moving airships.
+- Fixed mismatches in some armour item drop models.
 
 ## [0.17.0] - 2024-12-28
 
