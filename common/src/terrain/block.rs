@@ -1,10 +1,11 @@
 use super::{
-    SpriteKind,
+    SpriteCfg, SpriteKind,
     sprite::{self, RelativeNeighborPosition},
 };
 use crate::{
     comp::{fluid_dynamics::LiquidKind, tool::ToolKind},
     consts::FRIC_GROUND,
+    effect::BuffEffect,
     make_case_elim, rtsim,
     vol::FilledVox,
 };
@@ -354,7 +355,7 @@ impl Block {
                 | SpriteKind::Pumpkin
                 | SpriteKind::Beehive // TODO: Not a fruit, but kind of acts like one
                 | SpriteKind::Coconut => Some(rtsim::ChunkResource::Fruit),
-            SpriteKind::Cabbage
+            SpriteKind::Lettuce
                 | SpriteKind::Carrot
                 | SpriteKind::Tomato
                 | SpriteKind::Radish
@@ -591,11 +592,23 @@ impl Block {
     }
 
     #[inline]
+    pub fn is_collectible(&self, sprite_cfg: Option<&SpriteCfg>) -> bool {
+        self.get_sprite().is_some_and(|s| {
+            sprite_cfg.and_then(|cfg| cfg.loot_table.as_ref()).is_some()
+                || s.default_tool() == Some(None)
+        }) && matches!(self.get_attr(), Ok(sprite::Collectable(true)) | Err(_))
+    }
+
+    #[inline]
     pub fn is_mountable(&self) -> bool { self.mount_offset().is_some() }
 
     /// Get the position and direction to mount this block if any.
     pub fn mount_offset(&self) -> Option<(Vec3<f32>, Vec3<f32>)> {
         self.get_sprite().and_then(|sprite| sprite.mount_offset())
+    }
+
+    pub fn mount_buffs(&self) -> Option<Vec<BuffEffect>> {
+        self.get_sprite().and_then(|sprite| sprite.mount_buffs())
     }
 
     pub fn is_controller(&self) -> bool {

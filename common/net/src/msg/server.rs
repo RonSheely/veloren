@@ -247,7 +247,7 @@ end of 2nd level Enums
 /// Inform the client of updates to the player list.
 ///
 /// Note: Before emiting any of these, check if the current
-/// [`Client::client_type`] wants to emit login events.
+/// [`veloren_client::Client::client_type`] wants to emit login events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PlayerListUpdate {
     Init(HashMap<Uid, PlayerInfo>),
@@ -267,7 +267,6 @@ pub struct PlayerInfo {
     pub player_alias: String,
     pub character: Option<CharacterInfo>,
     pub uuid: Uuid,
-    pub battle_mode: BattleMode,
 }
 
 /// used for localisation, filled by client and used by i18n code
@@ -285,6 +284,7 @@ pub struct CharacterInfo {
     /// directly from a client will be `Content::Plain`
     pub name: Content,
     pub gender: Option<Gender>,
+    pub battle_mode: BattleMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,9 +294,15 @@ pub enum InviteAnswer {
     TimedOut,
 }
 
+/// A message that should be displayed to the player, possibly with data to
+/// update the client.
+///
+/// See [`veloren_client::UserNotification`] for the stripped down version,
+/// which the client sends to the UI after removing (and using) any data that is
+/// not relevant to rendering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Notification {
-    WaypointSaved,
+    WaypointSaved { location_name: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

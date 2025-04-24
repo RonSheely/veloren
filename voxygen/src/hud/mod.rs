@@ -86,7 +86,7 @@ use crate::{
     },
     window::Event as WinEvent,
 };
-use client::Client;
+use client::{Client, UserNotification};
 use common::{
     combat,
     comp::{
@@ -121,10 +121,7 @@ use common::{
 };
 use common_base::{prof_span, span};
 use common_net::{
-    msg::{
-        Notification,
-        world_msg::{Marker, MarkerKind, SiteId},
-    },
+    msg::world_msg::{Marker, MarkerKind, SiteId},
     sync::WorldSyncExt,
 };
 use conrod_core::{
@@ -675,6 +672,7 @@ pub struct DebugInfo {
     pub current_track: String,
     pub current_artist: String,
     pub active_channels: ActiveChannels,
+    pub audio_cpu_usage: f32,
 }
 
 pub struct HudInfo<'a> {
@@ -822,7 +820,7 @@ pub enum PressBehavior {
     Toggle = 0,
 }
 /// Similar to [PressBehavior], with different semantics for settings that
-/// change state automatically. There is no [PressBehavior::update][update]
+/// change state automatically. There is no [PressBehavior::update]
 /// implementation because it doesn't apply to the use case; this is just a
 /// sentinel.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -1287,7 +1285,7 @@ pub struct Hud {
     ///
     /// Uses VecDeque to pop excess messages.
     message_backlog: VecDeque<comp::ChatMsg>,
-    new_notifications: VecDeque<Notification>,
+    new_notifications: VecDeque<UserNotification>,
     speech_bubbles: HashMap<Uid, comp::SpeechBubble>,
     content_bubbles: Vec<(Vec3<f32>, comp::SpeechBubble)>,
     pub show: Show,
@@ -2885,11 +2883,12 @@ impl Hud {
             .font_size(self.fonts.cyri.scale(14))
             .set(self.ids.song_info, ui_widgets);
             Text::new(&format!(
-                "Active channels: M{}, A{}, S{}, U{}",
+                "Active channels: M{}, A{}, S{}, U{}, CPU: {:2.0}%",
                 debug_info.active_channels.music,
                 debug_info.active_channels.ambience,
                 debug_info.active_channels.sfx,
                 debug_info.active_channels.ui,
+                debug_info.audio_cpu_usage * 100.0,
             ))
             .color(TEXT_COLOR)
             .down_from(self.ids.song_info, V_PAD)
@@ -3707,6 +3706,7 @@ impl Hud {
                 info.selected_entity,
                 &self.rot_imgs,
                 tooltip_manager,
+                global_state,
             )
             .set(self.ids.social_window, ui_widgets)
             {
@@ -4651,7 +4651,9 @@ impl Hud {
         }
     }
 
-    pub fn new_notification(&mut self, msg: Notification) { self.new_notifications.push_back(msg); }
+    pub fn new_notification(&mut self, msg: UserNotification) {
+        self.new_notifications.push_back(msg);
+    }
 
     pub fn set_scaling_mode(&mut self, scale_mode: ScaleMode) {
         self.ui.set_scaling_mode(scale_mode);
@@ -5354,7 +5356,7 @@ pub fn get_buff_image(buff: BuffKind, imgs: &Imgs) -> conrod_core::image::Id {
         BuffKind::Potion => imgs.buff_potion_0,
         // TODO: Need unique image for Agility (uses same as Hastened atm)
         BuffKind::Agility => imgs.buff_haste_0,
-        BuffKind::CampfireHeal => imgs.buff_campfire_heal_0,
+        BuffKind::RestingHeal => imgs.buff_resting_heal_0,
         BuffKind::EnergyRegen => imgs.buff_energyplus_0,
         BuffKind::IncreaseMaxEnergy => imgs.buff_energyplus_0,
         BuffKind::IncreaseMaxHealth => imgs.buff_healthplus_0,

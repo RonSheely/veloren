@@ -156,7 +156,7 @@ lazy_static! {
             BuffKind::Cursed => "cursed",
             BuffKind::Potion => "potion",
             BuffKind::Agility => "agility",
-            BuffKind::CampfireHeal => "campfire_heal",
+            BuffKind::RestingHeal => "resting_heal",
             BuffKind::EnergyRegen => "energy_regen",
             BuffKind::IncreaseMaxEnergy => "increase_max_energy",
             BuffKind::IncreaseMaxHealth => "increase_max_health",
@@ -210,8 +210,9 @@ lazy_static! {
     static ref BUFFS: Vec<String> = {
         let mut buff_pack: Vec<String> = BUFF_PARSER.keys().cloned().collect();
 
-        // Add `all` as valid command
+        // Add `all` and `clear` as valid command
         buff_pack.push("all".to_owned());
+        buff_pack.push("clear".to_owned());
         buff_pack
     };
 
@@ -443,6 +444,7 @@ pub enum ServerChatCommand {
     Scale,
     ServerPhysics,
     SetMotd,
+    SetWaypoint,
     Ship,
     Site,
     SkillPoint,
@@ -458,7 +460,6 @@ pub enum ServerChatCommand {
     Unban,
     UnbanIp,
     Version,
-    Waypoint,
     WeatherZone,
     Whitelist,
     Wiring,
@@ -1018,7 +1019,7 @@ impl ServerChatCommand {
             ServerChatCommand::Version => {
                 cmd(vec![], Content::localized("command-version-desc"), None)
             },
-            ServerChatCommand::Waypoint => cmd(
+            ServerChatCommand::SetWaypoint => cmd(
                 vec![],
                 Content::localized("command-waypoint-desc"),
                 Some(Admin),
@@ -1195,7 +1196,7 @@ impl ServerChatCommand {
             ServerChatCommand::Unban => "unban",
             ServerChatCommand::UnbanIp => "unban_ip",
             ServerChatCommand::Version => "version",
-            ServerChatCommand::Waypoint => "waypoint",
+            ServerChatCommand::SetWaypoint => "set_waypoint",
             ServerChatCommand::Wiring => "wiring",
             ServerChatCommand::Whitelist => "whitelist",
             ServerChatCommand::World => "world",

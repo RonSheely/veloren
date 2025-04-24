@@ -28,9 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New instruments: Rhythmo, Starlight Conch, Timbrel of Chaos, Viola Pizzicato.
 - Time estimate to erosion.
 - The ability to ask NPCs for directions to nearby establishments.
-- Type /wiki to open or the Veloren wiki or /wiki [topic] to search for a specific topic.
+- Type /wiki to open the Veloren wiki or /wiki [topic] to search for a specific topic.
 - Adding a space after chat mode commands changes chat modes.
 - New and more granular options for the `/kit` command.
+- Beds now regen health when mounted.
+- Setting dropdown for SFX channel capacity.
 
 ### Changed
 
@@ -38,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mountability now depends on mass, with the exception of ships and humanoids.
 - Hammer skill icons.
 - Renamed 'Bag' control setting to 'Inventory' and changed default keybind to 'i'.
-- Improved interaction HUD consistency and prioritize important interactions over others.
+- Improved interaction HUD consistency and prioritized important interactions over others.
 - Sword balance tweaks.
 - Vampire Castle chests are now the same as Haniwa chests.
 - Increased kelpies' swim speed.
@@ -61,9 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wolves are deadlier.
 - New messages of the day for singleplayer worlds.
 - Nerf npc aimbot.
-- Minor improvements to NPC pathfinding to reduce illogal pathing around obstacles.
+- Minor improvements to NPC pathfinding to reduce illegal pathing around obstacles.
 - Updated rat model.
 - Recipes now have relevant quality (colour) ratings.
+- Changed how RtSim handles repopulating NPCs. Instead of instantly creating a new one when one dies, it has a queue with a minimum time before trying to repopulate.
 
 ### Removed
 
@@ -72,14 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Realignment of tree and entrance for Haniwa Catacomb sites.
-- Riders no longer lags behind mounts.
+- Riders no longer lag behind mounts.
 - Can no longer ride while dead.
 - Realignment of airship dock signs in forest towns.
 - Fixed rotation of Bloodmoon Relic.
 - Captains no longer turn towards sounds or targets.
 - Soldier Crabs no longer spawn under the floor at Sahagin Island dungeons.
-- Minimap zooming can no longer exceed limits when zooming with hotkeys, making the behavious consistent for using the interface buttons or the hotkeys.
-- Fix "Uid was not mapped to any entity" errors
+- Minimap zooming can no longer exceed limits when zooming with hotkeys, making the behaviour consistent for using the interface buttons or the hotkeys.
+- Fix "Uid was not mapped to any entity" errors.
 - Fixes sprite orientations and placement.
 - Caves now show up in the map again.
 - Fixed airship dock position.
@@ -88,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made it easier to interact with sprites on moving airships.
 - Fixed mismatches in some armour item drop models.
 - Gnarling Chieftain's totem summons now face their target.
+- Game should no longer crash when encountering bad audio device configuration.
+- Audio backend tries to switch to a lower samplerate when detecting an abnormally high one.
+- Fixed music tracks playing straight after one another sometimes.
 
 ## [0.17.0] - 2024-12-28
 

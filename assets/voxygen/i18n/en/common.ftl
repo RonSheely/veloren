@@ -136,5 +136,7 @@ common-sprite-crate = Crate
 ## Diary section titles
 hud-diary-sections-skill_trees-title = Skill-Trees
 hud-diary-sections-abilities-title = Abilities
-hud-diary-sections-stats-title = Stats
+hud-diary-sections-character-title = Character
 hud-diary-sections-recipes-title = Recipes
+hud-battle-mode = Battle Mode
+hud-waypoint = Waypoint

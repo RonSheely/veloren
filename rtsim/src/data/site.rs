@@ -17,9 +17,13 @@ pub struct Site {
     pub wpos: Vec2<i32>,
     pub faction: Option<FactionId>,
 
-    /// The [`Report`]s that the site tracks (you can imagine them being on a
-    /// noticeboard or something).
+    /// The [`veloren_rtsim::data::report::Report`]s that the site tracks (you
+    /// can imagine them being on a noticeboard or something).
     pub known_reports: HashSet<ReportId>,
+
+    /// How many chunks this site is loaded in.
+    #[serde(skip)]
+    pub count_loaded_chunks: usize,
 
     /// The site generated during initial worldgen that this site corresponds
     /// to.
@@ -61,6 +65,8 @@ impl Site {
             .retain(|report| reports.contains_key(*report));
         // TODO: Limit number of reports
     }
+
+    pub fn is_loaded(&self) -> bool { self.count_loaded_chunks > 0 }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]

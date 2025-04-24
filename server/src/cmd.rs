@@ -206,6 +206,7 @@ fn do_command(
         ServerChatCommand::Say => handle_say,
         ServerChatCommand::ServerPhysics => handle_server_physics,
         ServerChatCommand::SetMotd => handle_set_motd,
+        ServerChatCommand::SetWaypoint => handle_set_waypoint,
         ServerChatCommand::Ship => handle_spawn_ship,
         ServerChatCommand::Site => handle_site,
         ServerChatCommand::SkillPoint => handle_skill_point,
@@ -225,7 +226,6 @@ fn do_command(
         ServerChatCommand::Unban => handle_unban,
         ServerChatCommand::UnbanIp => handle_unban_ip,
         ServerChatCommand::Version => handle_version,
-        ServerChatCommand::Waypoint => handle_waypoint,
         ServerChatCommand::Wiring => handle_spawn_wiring,
         ServerChatCommand::Whitelist => handle_whitelist,
         ServerChatCommand::World => handle_world,
@@ -3428,7 +3428,7 @@ fn handle_explosion(
     Ok(())
 }
 
-fn handle_waypoint(
+fn handle_set_waypoint(
     server: &mut Server,
     client: EcsEntity,
     target: EcsEntity,
@@ -3437,6 +3437,10 @@ fn handle_waypoint(
 ) -> CmdResult<()> {
     let pos = position(server, target, "target")?;
     let time = *server.state.mut_resource::<Time>();
+    let location_name = server
+        .world()
+        .get_location_name(server.index.as_index_ref(), pos.0.xy().as_::<i32>());
+
     insert_or_replace_component(
         server,
         target,
@@ -3447,13 +3451,21 @@ fn handle_waypoint(
         client,
         ServerGeneral::server_msg(
             ChatType::CommandInfo,
-            Content::Plain("Waypoint saved!".to_string()),
+            Content::localized("command-set-waypoint-result"),
         ),
     );
-    server.notify_client(
-        target,
-        ServerGeneral::Notification(Notification::WaypointSaved),
-    );
+
+    if let Some(location_name) = location_name {
+        server.notify_client(
+            target,
+            ServerGeneral::Notification(Notification::WaypointSaved { location_name }),
+        );
+    } else {
+        error!(
+            "Failed to get location name for waypoint. Client was not notified of new waypoint."
+        );
+    }
+
     Ok(())
 }
 
@@ -5202,40 +5214,57 @@ fn handle_buff(
 
     let strength = strength.unwrap_or(0.01);
 
-    if buff == "all" {
-        let duration = duration.unwrap_or(5.0);
-        let buffdata = BuffData::new(strength, Some(Secs(duration)));
+    match buff.as_str() {
+        "all" => {
+            let duration = duration.unwrap_or(5.0);
+            let buffdata = BuffData::new(strength, Some(Secs(duration)));
 
-        // apply every(*) non-complex buff
-        //
-        // (*) BUFF_PACK contains all buffs except
-        // invulnerability
-        BUFF_PACK
-            .iter()
-            .filter_map(|kind_key| parse_buffkind(kind_key))
-            .filter(|buffkind| buffkind.is_simple())
-            .for_each(|buffkind| cast_buff(buffkind, buffdata, server, target));
-        Ok(())
-    } else {
-        let buffkind = parse_buffkind(&buff).ok_or_else(|| {
-            Content::localized_with_args("command-buff-unknown", [("buff", buff.clone())])
-        })?;
-        let buffdata = build_buff(
-            buffkind,
-            strength,
-            duration.unwrap_or(10.0),
-            (!buffkind.is_simple())
-                .then(|| {
-                    misc_data_spec.ok_or_else(|| {
-                        Content::localized_with_args("command-buff-data", [("buff", buff.clone())])
+            // apply every(*) non-complex buff
+            //
+            // (*) BUFF_PACK contains all buffs except
+            // invulnerability
+            BUFF_PACK
+                .iter()
+                .filter_map(|kind_key| parse_buffkind(kind_key))
+                .filter(|buffkind| buffkind.is_simple())
+                .for_each(|buffkind| cast_buff(buffkind, buffdata, server, target));
+        },
+        "clear" => {
+            if let Some(mut buffs) = server
+                .state
+                .ecs()
+                .write_storage::<comp::Buffs>()
+                .get_mut(target)
+            {
+                buffs.buffs.clear();
+                buffs.kinds.clear();
+            }
+        },
+        _ => {
+            let buffkind = parse_buffkind(&buff).ok_or_else(|| {
+                Content::localized_with_args("command-buff-unknown", [("buff", buff.clone())])
+            })?;
+            let buffdata = build_buff(
+                buffkind,
+                strength,
+                duration.unwrap_or(10.0),
+                (!buffkind.is_simple())
+                    .then(|| {
+                        misc_data_spec.ok_or_else(|| {
+                            Content::localized_with_args("command-buff-data", [(
+                                "buff",
+                                buff.clone(),
+                            )])
+                        })
                     })
-                })
-                .transpose()?,
-        )?;
+                    .transpose()?,
+            )?;
 
-        cast_buff(buffkind, buffdata, server, target);
-        Ok(())
+            cast_buff(buffkind, buffdata, server, target);
+        },
     }
+
+    Ok(())
 }
 
 fn build_buff(
@@ -5263,7 +5292,7 @@ fn build_buff(
             | BuffKind::Saturation
             | BuffKind::Potion
             | BuffKind::Agility
-            | BuffKind::CampfireHeal
+            | BuffKind::RestingHeal
             | BuffKind::Frenzied
             | BuffKind::EnergyRegen
             | BuffKind::IncreaseMaxEnergy
