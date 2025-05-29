@@ -32,13 +32,9 @@ hot-reloading = ["common/hot-reloading"]
 singleplayer = ["server"]
 simd = ["vek/platform_intrinsics"]
 tracy = ["common-frontend/tracy", "client/tracy"]
-tracy-memory = ["tracy"] # enables heap profiling with tracy
-plugins = [
-    "client/plugins",
-    "server/plugins",
-    "anim/plugins",
-    "common/plugins",
-]
+tracy-memory = ["tracy"]
+# enables heap profiling with tracy
+plugins = ["client/plugins", "server/plugins", "anim/plugins", "common/plugins"]
 egui-ui = ["voxygen-egui", "egui", "egui_wgpu_backend", "egui_winit_platform"]
 shaderc-from-source = ["shaderc/build-from-source"]
 discord = ["discord-sdk"]
@@ -129,13 +125,13 @@ dot_vox = "5.1"
 guillotiere = "0.6.2"
 hashbrown = { workspace = true }
 image = { workspace = true, features = ["ico"] }
-kira = { git="https://github.com/DaforLynx/kira.git", tag="v0.10.6-with-config", default-features = false, features = [
+kira = { git = "https://github.com/DaforLynx/kira.git", tag = "v0.10.6-with-config", default-features = false, features = [
     "cpal",
     "symphonia",
     "ogg",
 ] }
 lazy_static = { workspace = true }
-native-dialog = { version = "0.7.0", optional = true }
+native-dialog = { version = "0.9.0", optional = true }
 num = { workspace = true }
 ordered-float = { workspace = true }
 rand = { workspace = true }
@@ -168,7 +164,11 @@ dispatch = "0.2"
 winres = "0.1"
 
 [target.'cfg(target_family = "windows")'.dependencies]
-mimalloc = "0.1.29"
+# Pinned due to a memory leak on Windows occuring in versions 0.1.44
+# to 0.1.46 of mimalloc and versions 0.1.40 to 0.1.42 of libmimalloc-sys
+# respectively.
+mimalloc = "=0.1.43"
+libmimalloc-sys = "=0.1.39"
 
 # Mumble
 [target.'cfg(not(target_os="macos"))'.dependencies]

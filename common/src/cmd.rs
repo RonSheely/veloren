@@ -158,6 +158,7 @@ lazy_static! {
             BuffKind::Agility => "agility",
             BuffKind::RestingHeal => "resting_heal",
             BuffKind::EnergyRegen => "energy_regen",
+            BuffKind::ComboGeneration => "combo_generation",
             BuffKind::IncreaseMaxEnergy => "increase_max_energy",
             BuffKind::IncreaseMaxHealth => "increase_max_health",
             BuffKind::Invulnerability => "invulnerability",
@@ -396,6 +397,8 @@ pub enum ServerChatCommand {
     Explosion,
     Faction,
     GiveItem,
+    Gizmos,
+    GizmosRange,
     Goto,
     GotoRand,
     Group,
@@ -443,6 +446,7 @@ pub enum ServerChatCommand {
     Say,
     Scale,
     ServerPhysics,
+    SetBodyType,
     SetMotd,
     SetWaypoint,
     Ship,
@@ -672,6 +676,29 @@ impl ServerChatCommand {
                 Content::localized("command-give_item-desc"),
                 Some(Admin),
             ),
+            ServerChatCommand::Gizmos => cmd(
+                vec![
+                    Enum(
+                        "kind",
+                        ["All".to_string(), "None".to_string()]
+                            .into_iter()
+                            .chain(
+                                comp::gizmos::GizmoSubscription::iter()
+                                    .map(|kind| kind.to_string()),
+                            )
+                            .collect(),
+                        Required,
+                    ),
+                    EntityTarget(Optional),
+                ],
+                Content::localized("command-gizmos-desc"),
+                Some(Admin),
+            ),
+            ServerChatCommand::GizmosRange => cmd(
+                vec![Float("range", 32.0, Required)],
+                Content::localized("command-gizmos_range-desc"),
+                Some(Admin),
+            ),
             ServerChatCommand::Goto => cmd(
                 vec![
                     Float("x", 0.0, Required),
@@ -886,6 +913,18 @@ impl ServerChatCommand {
                 Content::localized("command-set_motd-desc"),
                 Some(Admin),
             ),
+            ServerChatCommand::SetBodyType => cmd(
+                vec![
+                    Enum(
+                        "body type",
+                        vec!["Female".to_string(), "Male".to_string()],
+                        Required,
+                    ),
+                    Boolean("permanent", "false".to_string(), Requirement::Optional),
+                ],
+                Content::localized("command-set_body_type-desc"),
+                Some(Admin),
+            ),
             ServerChatCommand::Ship => cmd(
                 vec![
                     Enum(
@@ -1082,7 +1121,11 @@ impl ServerChatCommand {
                 Some(Admin),
             ),
             ServerChatCommand::RepairEquipment => cmd(
-                vec![],
+                vec![ArgumentSpec::Boolean(
+                    "repair inventory",
+                    true.to_string(),
+                    Optional,
+                )],
                 Content::localized("command-repair_equipment-desc"),
                 Some(Admin),
             ),
@@ -1140,6 +1183,8 @@ impl ServerChatCommand {
             ServerChatCommand::Explosion => "explosion",
             ServerChatCommand::Faction => "faction",
             ServerChatCommand::GiveItem => "give_item",
+            ServerChatCommand::Gizmos => "gizmos",
+            ServerChatCommand::GizmosRange => "gizmos_range",
             ServerChatCommand::Goto => "goto",
             ServerChatCommand::GotoRand => "goto_rand",
             ServerChatCommand::Group => "group",
@@ -1177,6 +1222,7 @@ impl ServerChatCommand {
             ServerChatCommand::Say => "say",
             ServerChatCommand::ServerPhysics => "server_physics",
             ServerChatCommand::SetMotd => "set_motd",
+            ServerChatCommand::SetBodyType => "set_body_type",
             ServerChatCommand::Ship => "ship",
             ServerChatCommand::Site => "site",
             ServerChatCommand::SkillPoint => "skill_point",

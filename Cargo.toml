@@ -137,6 +137,7 @@ key = "veloren-nix.cachix.org-1:zokfKJqVsNV6kI/oJdLF6TYBdNPYGSb+diMVQPn/5Rc="
 
 [workspace.dependencies]
 async-trait = "0.1.42"
+atomic_refcell = "0.1.13"
 bincode = { version = "1.3.3" }
 bitflags = { version = "2.2.1" }
 clap = { version = "4.2", features = ["derive", "env"] }
@@ -170,8 +171,8 @@ noise = { version = "0.9", default-features = false }
 num = { version = "0.4" }
 num-traits = { version = "0.2" }
 ordered-float = { version = "4.2", default-features = true }
-prometheus = { version = "0.13", default-features = false }
-prometheus-hyper = "0.2"
+prometheus = { version = "0.14", default-features = false }
+prometheus-hyper = "0.2.1"
 rand = { version = "0.8" }
 rand_chacha = { version = "0.3" }
 rayon = { version = "1.5" }

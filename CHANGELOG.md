@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New and more granular options for the `/kit` command.
 - Beds now regen health when mounted.
 - Setting dropdown for SFX channel capacity.
+- New Buccaneer entity spawn at the Pirate Hideout, including a new T2 obtainable buccaneer set.
+- Serverside gizmos for debugging things like pathfinding.
+- A potion which permanently changes the characters body type.
 
 ### Changed
 
@@ -68,6 +71,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Recipes now have relevant quality (colour) ratings.
 - Changed how RtSim handles repopulating NPCs. Instead of instantly creating a new one when one dies, it has a queue with a minimum time before trying to repopulate.
 - Sitting at a campfire is now required to set your spawn point.
+- Automatic item merging only applies to inventory events.
+- Parry now has the same precision power as backstab.
+- Improved safety railings on airships to mitigate surprise skydiving.
+- Updated tradable recipes and balanced some prices.
+- Merged craftable lanterns into a single recipe.
+- Updated campfire and bed interaction texts.
+- Witch and Pirate sets (T3 and T1 respectively) are now obtainable and have been given new models, alongside Twig Set being changed out for Adventurer Set.
+- Updated Tidal Warrior model.
 
 ### Removed
 
@@ -96,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Audio backend tries to switch to a lower samplerate when detecting an abnormally high one.
 - Fixed music tracks playing straight after one another sometimes.
 - Fixed some summons taking control of the boss.
+- Desert area wildlife is back to spawning in hot temperatures.
 
 ## [0.17.0] - 2024-12-28
 

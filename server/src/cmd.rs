@@ -32,8 +32,8 @@ use common::{
     },
     combat,
     comp::{
-        self, AdminRole, Aura, AuraKind, BuffCategory, ChatType, Content, Inventory, Item,
-        LightEmitter, LocalizationArg, WaypointArea,
+        self, AdminRole, Aura, AuraKind, BuffCategory, ChatType, Content, GizmoSubscriber,
+        Inventory, Item, LightEmitter, LocalizationArg, WaypointArea,
         agent::{FlightMode, PidControllers},
         aura::{AuraKindVariant, AuraTarget},
         buff::{Buff, BuffData, BuffKind, BuffSource, DestInfo, MiscBuffData},
@@ -48,7 +48,7 @@ use common::{
     effect::Effect,
     event::{
         ClientDisconnectEvent, CreateNpcEvent, CreateSpecialEntityEvent, EventBus, ExplosionEvent,
-        GroupManipEvent, InitiateInviteEvent, TamePetEvent,
+        GroupManipEvent, InitiateInviteEvent, PermanentChange, TamePetEvent,
     },
     generation::{EntityConfig, EntityInfo, SpecialEntity},
     link::Is,
@@ -169,6 +169,8 @@ fn do_command(
         ServerChatCommand::Explosion => handle_explosion,
         ServerChatCommand::Faction => handle_faction,
         ServerChatCommand::GiveItem => handle_give_item,
+        ServerChatCommand::Gizmos => handle_gizmos,
+        ServerChatCommand::GizmosRange => handle_gizmos_range,
         ServerChatCommand::Goto => handle_goto,
         ServerChatCommand::GotoRand => handle_goto_rand,
         ServerChatCommand::Group => handle_group,
@@ -205,6 +207,7 @@ fn do_command(
         ServerChatCommand::Safezone => handle_safezone,
         ServerChatCommand::Say => handle_say,
         ServerChatCommand::ServerPhysics => handle_server_physics,
+        ServerChatCommand::SetBodyType => handle_set_body_type,
         ServerChatCommand::SetMotd => handle_set_motd,
         ServerChatCommand::SetWaypoint => handle_set_waypoint,
         ServerChatCommand::Ship => handle_spawn_ship,
@@ -596,7 +599,7 @@ fn handle_drop_all(
             )),
             comp::Ori::default(),
             comp::Vel(vel),
-            comp::PickupItem::new(item, ProgramTime(server.state.get_program_time())),
+            comp::PickupItem::new(item, ProgramTime(server.state.get_program_time()), true),
             None,
         );
     }
@@ -696,6 +699,101 @@ fn handle_give_item(
                 "item", item_name,
             )]))
         }
+    } else {
+        Err(action.help_content())
+    }
+}
+
+fn handle_gizmos(
+    server: &mut Server,
+    _client: EcsEntity,
+    target: EcsEntity,
+    args: Vec<String>,
+    action: &ServerChatCommand,
+) -> CmdResult<()> {
+    if let (Some(kind), gizmo_target) = parse_cmd_args!(args, String, EntityTarget) {
+        let mut subscribers = server.state().ecs().write_storage::<GizmoSubscriber>();
+
+        let gizmo_target = gizmo_target
+            .map(|gizmo_target| get_entity_target(gizmo_target, server))
+            .transpose()?
+            .map(|gizmo_target| {
+                server
+                    .state()
+                    .ecs()
+                    .read_storage()
+                    .get(gizmo_target)
+                    .copied()
+                    .ok_or(Content::localized("command-entity-dead"))
+            })
+            .transpose()?;
+
+        match kind.as_str() {
+            "All" => {
+                let subscriber = subscribers
+                    .entry(target)
+                    .map_err(|_| Content::localized("command-entity-dead"))?
+                    .or_insert_with(Default::default);
+                let context = match gizmo_target {
+                    Some(uid) => comp::gizmos::GizmoContext::EnabledWithTarget(uid),
+                    None => comp::gizmos::GizmoContext::Enabled,
+                };
+                for (_, ctx) in subscriber.gizmos.iter_mut() {
+                    *ctx = context.clone();
+                }
+                Ok(())
+            },
+            "None" => {
+                subscribers.remove(target);
+                Ok(())
+            },
+            s => {
+                if let Ok(kind) = comp::gizmos::GizmoSubscription::from_str(s) {
+                    let subscriber = subscribers
+                        .entry(target)
+                        .map_err(|_| Content::localized("command-entity-dead"))?
+                        .or_insert_with(Default::default);
+
+                    subscriber.gizmos[kind] = match gizmo_target {
+                        Some(uid) => comp::gizmos::GizmoContext::EnabledWithTarget(uid),
+                        None => match subscriber.gizmos[kind] {
+                            comp::gizmos::GizmoContext::Disabled => {
+                                comp::gizmos::GizmoContext::Enabled
+                            },
+                            comp::gizmos::GizmoContext::Enabled
+                            | comp::gizmos::GizmoContext::EnabledWithTarget(_) => {
+                                comp::gizmos::GizmoContext::Disabled
+                            },
+                        },
+                    };
+
+                    Ok(())
+                } else {
+                    Err(action.help_content())
+                }
+            },
+        }
+    } else {
+        Err(action.help_content())
+    }
+}
+
+fn handle_gizmos_range(
+    server: &mut Server,
+    _client: EcsEntity,
+    target: EcsEntity,
+    args: Vec<String>,
+    action: &ServerChatCommand,
+) -> CmdResult<()> {
+    if let Some(range) = parse_cmd_args!(args, f32) {
+        let mut subscribers = server.state().ecs().write_storage::<GizmoSubscriber>();
+        subscribers
+            .entry(target)
+            .map_err(|_| Content::localized("command-entity-dead"))?
+            .or_insert_with(Default::default)
+            .range = range;
+
+        Ok(())
     } else {
         Err(action.help_content())
     }
@@ -1009,6 +1107,159 @@ fn handle_set_motd(
             })
         },
         _ => Err(action.help_content()),
+    }
+}
+
+fn handle_set_body_type(
+    server: &mut Server,
+    _client: EcsEntity,
+    target: EcsEntity,
+    args: Vec<String>,
+    action: &ServerChatCommand,
+) -> CmdResult<()> {
+    if let (Some(new_body_type), permanent) = parse_cmd_args!(args, String, bool) {
+        let permananet = permanent.unwrap_or(false);
+        let body = server
+            .state
+            .ecs()
+            .read_storage::<comp::Body>()
+            .get(target)
+            .copied();
+        if let Some(mut body) = body {
+            fn parse_body_type<B: FromStr + std::fmt::Display>(
+                input: &str,
+                all_types: impl IntoIterator<Item = B>,
+            ) -> CmdResult<B> {
+                FromStr::from_str(input).map_err(|_| {
+                    Content::localized_with_args("cmd-set_body_type-not_found", [(
+                        "options",
+                        all_types
+                            .into_iter()
+                            .map(|b| b.to_string())
+                            .reduce(|mut a, b| {
+                                a.push_str(",\n");
+                                a.push_str(&b);
+                                a
+                            })
+                            .unwrap_or_default(),
+                    )])
+                })
+            }
+            let old_body = body;
+            match &mut body {
+                comp::Body::Humanoid(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::humanoid::ALL_BODY_TYPES)?;
+                },
+                comp::Body::QuadrupedSmall(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::quadruped_small::ALL_BODY_TYPES)?;
+                },
+                comp::Body::QuadrupedMedium(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::quadruped_medium::ALL_BODY_TYPES)?;
+                },
+                comp::Body::BirdMedium(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::bird_medium::ALL_BODY_TYPES)?;
+                },
+                comp::Body::FishMedium(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::fish_medium::ALL_BODY_TYPES)?;
+                },
+                comp::Body::Dragon(body) => {
+                    body.body_type = parse_body_type(&new_body_type, comp::dragon::ALL_BODY_TYPES)?;
+                },
+                comp::Body::BirdLarge(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::bird_large::ALL_BODY_TYPES)?;
+                },
+                comp::Body::FishSmall(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::fish_small::ALL_BODY_TYPES)?;
+                },
+                comp::Body::BipedLarge(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::biped_large::ALL_BODY_TYPES)?;
+                },
+                comp::Body::BipedSmall(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::biped_small::ALL_BODY_TYPES)?;
+                },
+                comp::Body::Object(_) => {},
+                comp::Body::Golem(body) => {
+                    body.body_type = parse_body_type(&new_body_type, comp::golem::ALL_BODY_TYPES)?;
+                },
+                comp::Body::Theropod(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::theropod::ALL_BODY_TYPES)?;
+                },
+                comp::Body::QuadrupedLow(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::quadruped_low::ALL_BODY_TYPES)?;
+                },
+                comp::Body::Ship(_) => {},
+                comp::Body::Arthropod(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::arthropod::ALL_BODY_TYPES)?;
+                },
+                comp::Body::Item(_) => {},
+                comp::Body::Crustacean(body) => {
+                    body.body_type =
+                        parse_body_type(&new_body_type, comp::crustacean::ALL_BODY_TYPES)?;
+                },
+                comp::Body::Plugin(_) => {},
+            };
+
+            if old_body != body {
+                assign_body(server, target, body)?;
+
+                if permananet {
+                    if let (
+                        Some(new_body),
+                        Some(player),
+                        Some(comp::Presence {
+                            kind: comp::PresenceKind::Character(id),
+                            ..
+                        }),
+                    ) = (
+                        server.state.ecs().read_storage::<comp::Body>().get(target),
+                        server
+                            .state
+                            .ecs()
+                            .read_storage::<comp::Player>()
+                            .get(target),
+                        server
+                            .state
+                            .ecs()
+                            .read_storage::<comp::Presence>()
+                            .get(target),
+                    ) {
+                        server
+                            .state()
+                            .ecs()
+                            .write_resource::<crate::persistence::character_updater::CharacterUpdater>()
+                            .edit_character(
+                                target,
+                                player.uuid().to_string(),
+                                *id,
+                                None,
+                                (*new_body,),
+                                Some(PermanentChange {
+                                    expected_old_body: old_body,
+                                }),
+                            );
+                    } else {
+                        return Err(Content::localized("cmd-set_body_type-not_character"));
+                    }
+                }
+            }
+            Ok(())
+        } else {
+            Err(Content::localized("cmd-set_body_type-no_body"))
+        }
+    } else {
+        Err(action.help_content())
     }
 }
 
@@ -1968,7 +2219,10 @@ fn handle_spawn_training_dummy(
 
     let body = comp::Body::Object(comp::object::Body::TrainingDummy);
 
-    let stats = comp::Stats::new(Content::with_attr("npc-custom-village-dummy", "neut"), body);
+    let stats = comp::Stats::new(
+        Content::with_attr("name-custom-village-dummy", "neut"),
+        body,
+    );
     let skill_set = comp::SkillSet::default();
     let health = comp::Health::new(body);
     let poise = comp::Poise::new(body);
@@ -5247,7 +5501,10 @@ fn handle_buff(
             let buffdata = build_buff(
                 buffkind,
                 strength,
-                duration.unwrap_or(10.0),
+                duration.unwrap_or(match buffkind {
+                    BuffKind::ComboGeneration => 1.0,
+                    _ => 10.0,
+                }),
                 (!buffkind.is_simple())
                     .then(|| {
                         misc_data_spec.ok_or_else(|| {
@@ -5295,6 +5552,7 @@ fn build_buff(
             | BuffKind::RestingHeal
             | BuffKind::Frenzied
             | BuffKind::EnergyRegen
+            | BuffKind::ComboGeneration
             | BuffKind::IncreaseMaxEnergy
             | BuffKind::IncreaseMaxHealth
             | BuffKind::Invulnerability
@@ -5626,6 +5884,24 @@ fn handle_lightning(
     Ok(())
 }
 
+fn assign_body(server: &mut Server, target: EcsEntity, body: comp::Body) -> CmdResult<()> {
+    insert_or_replace_component(server, target, body, "body")?;
+    insert_or_replace_component(server, target, body.mass(), "mass")?;
+    insert_or_replace_component(server, target, body.density(), "density")?;
+    insert_or_replace_component(server, target, body.collider(), "collider")?;
+
+    if let Some(mut stat) = server
+        .state
+        .ecs_mut()
+        .write_storage::<comp::Stats>()
+        .get_mut(target)
+    {
+        stat.original_body = body;
+    }
+
+    Ok(())
+}
+
 fn handle_body(
     server: &mut Server,
     _client: EcsEntity,
@@ -5635,20 +5911,8 @@ fn handle_body(
 ) -> CmdResult<()> {
     if let Some(npc::NpcBody(_id, mut body)) = parse_cmd_args!(args, npc::NpcBody) {
         let body = body();
-        insert_or_replace_component(server, target, body, "body")?;
-        insert_or_replace_component(server, target, body.mass(), "mass")?;
-        insert_or_replace_component(server, target, body.density(), "density")?;
-        insert_or_replace_component(server, target, body.collider(), "collider")?;
 
-        if let Some(mut stat) = server
-            .state
-            .ecs_mut()
-            .write_storage::<comp::Stats>()
-            .get_mut(target)
-        {
-            stat.original_body = body;
-        }
-        Ok(())
+        assign_body(server, target, body)
     } else {
         Err(action.help_content())
     }
@@ -5690,13 +5954,15 @@ fn handle_scale(
     }
 }
 
+// /repair_equipment <false/true>
 fn handle_repair_equipment(
     server: &mut Server,
     client: EcsEntity,
     target: EcsEntity,
-    _args: Vec<String>,
+    args: Vec<String>,
     action: &ServerChatCommand,
 ) -> CmdResult<()> {
+    let repair_inventory = parse_cmd_args!(args, bool).unwrap_or(false);
     let ecs = server.state.ecs();
     if let Some(mut inventory) = ecs.write_storage::<comp::Inventory>().get_mut(target) {
         let ability_map = ecs.read_resource::<AbilityMap>();
@@ -5704,17 +5970,34 @@ fn handle_repair_equipment(
         let slots = inventory
             .equipped_items_with_slot()
             .filter(|(_, item)| item.has_durability())
-            .map(|(slot, _)| slot)
-            .collect::<Vec<_>>();
+            .map(|(slot, _)| Slot::Equip(slot))
+            .chain(
+                repair_inventory
+                    .then(|| {
+                        inventory
+                            .slots_with_id()
+                            .filter(|(_, item)| {
+                                item.as_ref().is_some_and(|item| item.has_durability())
+                            })
+                            .map(|(slot, _)| Slot::Inventory(slot))
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
+            .collect::<Vec<Slot>>();
+
         for slot in slots {
-            inventory.repair_item_at_slot(Slot::Equip(slot), &ability_map, &msm);
+            inventory.repair_item_at_slot(slot, &ability_map, &msm);
         }
+
+        let key = if repair_inventory {
+            "command-repaired-inventory_items"
+        } else {
+            "command-repaired-items"
+        };
         server.notify_client(
             client,
-            ServerGeneral::server_msg(
-                ChatType::CommandInfo,
-                Content::localized("command-repaired-items"),
-            ),
+            ServerGeneral::server_msg(ChatType::CommandInfo, Content::localized(key)),
         );
         Ok(())
     } else {

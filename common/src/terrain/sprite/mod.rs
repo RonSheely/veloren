@@ -367,7 +367,7 @@ sprites! {
         Beehive     = 0x24,
         Bowl        = 0x25,
         PotionMinor = 0x26,
-        PotionDummy = 0x27,
+        //= 0x27,
         VialEmpty   = 0x28,
     },
     MineableResource = 5 has Damage {
@@ -515,6 +515,8 @@ sprites! {
         Crate             = 0x0D,
         Barrel            = 0x0E,
         CrateBlock        = 0x0F,
+        WitchChest        = 0x10,
+        PirateChest       = 0x11,
     },
     Modular = 10 has Ori, AdjacentType {
         FenceWoodWoodland = 0x00,
@@ -632,19 +634,22 @@ impl SpriteKind {
             SpriteKind::Turnip => 0.36,
             SpriteKind::Pumpkin => 0.81,
             SpriteKind::Chest => 1.09,
-            SpriteKind::CommonLockedChest => 1.09,
-            SpriteKind::DungeonChest0 => 1.09,
-            SpriteKind::DungeonChest1 => 1.09,
-            SpriteKind::DungeonChest2 => 1.09,
-            SpriteKind::DungeonChest3 => 1.09,
-            SpriteKind::DungeonChest4 => 1.09,
-            SpriteKind::DungeonChest5 => 1.09,
-            SpriteKind::CoralChest => 1.09,
-            SpriteKind::HaniwaUrn => 1.09,
-            SpriteKind::SahaginChest => 1.09,
-            SpriteKind::TerracottaChest => 1.09,
+            SpriteKind::CommonLockedChest
+            | SpriteKind::DungeonChest0
+            | SpriteKind::DungeonChest1
+            | SpriteKind::DungeonChest2
+            | SpriteKind::DungeonChest3
+            | SpriteKind::DungeonChest4
+            | SpriteKind::DungeonChest5
+            | SpriteKind::CoralChest
+            | SpriteKind::HaniwaUrn
+            | SpriteKind::SahaginChest
+            | SpriteKind::TerracottaChest
+            | SpriteKind::WitchChest
+            | SpriteKind::PirateChest => 1.09,
             SpriteKind::TerracottaStatue => 5.29,
             SpriteKind::TerracottaBlock => 1.00,
+            // Fence is more than 1.0 to prevent auto block-hopping onto the fence.
             SpriteKind::FenceWoodWoodland => 1.09,
             SpriteKind::SeaDecorChain => 1.09,
             SpriteKind::SeaDecorBlock => 1.00,
@@ -672,11 +677,11 @@ impl SpriteKind {
             SpriteKind::Forge => 1.818,
             SpriteKind::Cauldron => 1.27,
             SpriteKind::SpinningWheel => 1.454,
-            SpriteKind::TanningRack => 1.454,
-            SpriteKind::Loom => 1.636,
+            SpriteKind::TanningRack => 1.363,
+            SpriteKind::Loom => 1.545,
             SpriteKind::Anvil => 1.18,
-            SpriteKind::CookingPot => 1.090,
-            SpriteKind::DismantlingBench => 1.18,
+            SpriteKind::CookingPot => 1.091,
+            SpriteKind::DismantlingBench => 1.091,
             SpriteKind::IceSpike => 1.0,
             SpriteKind::RepairBench => 1.2,
             SpriteKind::RoundCactus => 0.72,
@@ -995,6 +1000,8 @@ impl SpriteKind {
             SpriteKind::Frostwood => item("common.items.log.frostwood"),
             SpriteKind::Eldwood => item("common.items.log.eldwood"),
             SpriteKind::MagicalBarrier => table("common.loot_tables.sprite.chest"),
+            SpriteKind::WitchChest => table("common.loot_tables.spot.witch"),
+            SpriteKind::PirateChest => table("common.loot_tables.spot.buccaneer"),
             SpriteKind::Keyhole
             | SpriteKind::BoneKeyhole
             | SpriteKind::HaniwaKeyhole
@@ -1202,9 +1209,11 @@ impl SpriteKind {
     pub fn unlock_condition(&self, cfg: Option<SpriteCfg>) -> UnlockKind {
         cfg.and_then(|cfg| cfg.unlock)
             .unwrap_or_else(|| match self {
-                SpriteKind::CommonLockedChest => UnlockKind::Consumes(
-                    ItemDefinitionIdOwned::Simple(String::from("common.items.utility.lockpick_0")),
-                ),
+                SpriteKind::CommonLockedChest => {
+                    UnlockKind::Consumes(ItemDefinitionIdOwned::Simple(String::from(
+                        "common.items.utility.lockpick.lockpick_copper",
+                    )))
+                },
                 SpriteKind::SahaginKeyhole => UnlockKind::Consumes(ItemDefinitionIdOwned::Simple(
                     String::from("common.items.keys.sahagin_key"),
                 )),
@@ -1240,6 +1249,12 @@ impl SpriteKind {
                     ItemDefinitionIdOwned::Simple(String::from("common.items.keys.minotaur_key"))
                         .to_owned(),
                 ),
+                SpriteKind::WitchChest => UnlockKind::Consumes(ItemDefinitionIdOwned::Simple(
+                    String::from("common.items.utility.lockpick.lockpick_cobalt"),
+                )),
+                SpriteKind::PirateChest => UnlockKind::Consumes(ItemDefinitionIdOwned::Simple(
+                    String::from("common.items.utility.lockpick.lockpick_iron"),
+                )),
                 _ => UnlockKind::Free,
             })
     }

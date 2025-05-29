@@ -181,6 +181,7 @@ pub enum SfxEvent {
     Music(ToolKind, AbilitySpec),
     Yeet,
     Hiss,
+    LongHiss,
     Klonk,
     SmashKlonk,
     FireShockwave,
@@ -192,6 +193,7 @@ pub enum SfxEvent {
     TeleportedByPortal,
     FromTheAshes,
     SurpriseEgg,
+    Transformation,
     Bleep,
     Charge,
     StrigoiHead,
@@ -374,7 +376,7 @@ impl From<&InventoryUpdateEvent> for SfxEvent {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct SfxTriggerItem {
     /// A list of SFX filepaths for this event
     pub files: Vec<String>,
@@ -502,6 +504,11 @@ impl SfxMgr {
                 let sfx_trigger_item = triggers.get_key_value(&SfxEvent::SurpriseEgg);
                 audio.emit_sfx(sfx_trigger_item, *pos, Some(2.0));
             },
+            Outcome::Transformation { pos, .. } => {
+                // TODO: Give this a sound
+                let sfx_trigger_item = triggers.get_key_value(&SfxEvent::Transformation);
+                audio.emit_sfx(sfx_trigger_item, *pos, Some(2.0));
+            },
             Outcome::LaserBeam { pos, .. } => {
                 let sfx_trigger_item = triggers.get_key_value(&SfxEvent::LaserBeam);
                 audio.emit_sfx(sfx_trigger_item, *pos, Some(2.0));
@@ -569,6 +576,10 @@ impl SfxMgr {
                     },
                     Body::Object(object::Body::Lavathrower) => {
                         let sfx_trigger_item = triggers.get_key_value(&SfxEvent::DeepLaugh);
+                        audio.emit_sfx(sfx_trigger_item, *pos, Some(2.0));
+                    },
+                    Body::Object(object::Body::SeaLantern) => {
+                        let sfx_trigger_item = triggers.get_key_value(&SfxEvent::LongHiss);
                         audio.emit_sfx(sfx_trigger_item, *pos, Some(2.0));
                     },
                     Body::Object(object::Body::Tornado)

@@ -4,7 +4,13 @@
     clippy::needless_pass_by_ref_mut // until we find a better way for specs
 )]
 #![deny(clippy::clone_on_ref_ptr)]
-#![feature(box_patterns, let_chains, option_zip, const_type_name)]
+#![feature(
+    box_patterns,
+    let_chains,
+    option_zip,
+    const_type_name,
+    slice_partition_dedup
+)]
 
 pub mod automod;
 mod character_creator;
@@ -473,8 +479,6 @@ impl Server {
 
         #[cfg(feature = "worldgen")]
         let spawn_point = SpawnPoint({
-            use world::civ::SiteKind;
-
             let index = index.as_index_ref();
             // NOTE: all of these `.map(|e| e as [type])` calls should compile into no-ops,
             // but are needed to be explicit about casting (and to make the compiler stop
@@ -486,7 +490,7 @@ impl Server {
             let spawn_chunk = world
                 .civs()
                 .sites()
-                .filter(|site| matches!(site.kind, SiteKind::Settlement | SiteKind::Refactor))
+                .filter(|site| site.is_settlement())
                 .map(|site| site.center)
                 .min_by_key(|site_pos| site_pos.distance_squared(center_chunk))
                 .unwrap_or(center_chunk);

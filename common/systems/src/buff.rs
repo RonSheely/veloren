@@ -15,8 +15,8 @@ use common::{
         item::MaterialStatManifest,
     },
     event::{
-        BuffEvent, ChangeBodyEvent, CreateSpriteEvent, EmitExt, EnergyChangeEvent,
-        HealthChangeEvent, RemoveLightEmitterEvent, SoundEvent,
+        BuffEvent, ChangeBodyEvent, ComboChangeEvent, CreateSpriteEvent, EmitExt,
+        EnergyChangeEvent, HealthChangeEvent, RemoveLightEmitterEvent, SoundEvent,
     },
     event_emitters,
     outcome::Outcome,
@@ -41,6 +41,7 @@ event_emitters! {
         remove_light: RemoveLightEmitterEvent,
         health_change: HealthChangeEvent,
         energy_change: EnergyChangeEvent,
+        combo_change: ComboChangeEvent,
         sound: SoundEvent,
         create_sprite: CreateSpriteEvent,
         outcome: Outcome,
@@ -139,6 +140,7 @@ impl<'a> System<'a> for Sys {
                     emitters.emit(ChangeBodyEvent {
                         entity: e,
                         new_body: Body::Object(object::Body::Campfire),
+                        permanent_change: None,
                     });
                     emitters.emit(RemoveLightEmitterEvent { entity: e });
                 }
@@ -573,7 +575,11 @@ impl<'a> System<'a> for Sys {
             // Update body if needed.
             let new_body = body_override.unwrap_or(stat.original_body);
             if new_body != *body {
-                emitters.emit(ChangeBodyEvent { entity, new_body });
+                emitters.emit(ChangeBodyEvent {
+                    entity,
+                    new_body,
+                    permanent_change: None,
+                });
             }
 
             // Remove buffs that expire
@@ -617,7 +623,10 @@ fn execute_effect(
     entity: Entity,
     buff_owner: Option<Uid>,
     server_emitter: &mut (
-             impl EmitExt<HealthChangeEvent> + EmitExt<EnergyChangeEvent> + EmitExt<BuffEvent>
+             impl EmitExt<HealthChangeEvent>
+             + EmitExt<EnergyChangeEvent>
+             + EmitExt<ComboChangeEvent>
+             + EmitExt<BuffEvent>
          ),
     dt: f32,
     time: Time,
@@ -710,6 +719,16 @@ fn execute_effect(
                     entity,
                     change: amount,
                     reset_rate: *reset_rate_on_tick,
+                });
+            };
+        },
+        BuffEffect::ComboChangeOverTime { rate, tick_dur } => {
+            if let Some(num_ticks) = num_ticks(*tick_dur) {
+                let amount = (*rate * num_ticks * tick_dur.0 as f32) as i32;
+
+                server_emitter.emit(ComboChangeEvent {
+                    entity,
+                    change: amount,
                 });
             };
         },

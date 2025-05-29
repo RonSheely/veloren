@@ -276,6 +276,8 @@ pub enum ItemTag {
     Utility,
     Bag,
     SalvageInto(Material, u32),
+    Witch,
+    Pirate,
 }
 
 impl TagExampleInfo for ItemTag {
@@ -293,6 +295,8 @@ impl TagExampleInfo for ItemTag {
             ItemTag::Utility => "utility",
             ItemTag::Bag => "bag",
             ItemTag::SalvageInto(_, _) => "salvage",
+            ItemTag::Witch => "witch",
+            ItemTag::Pirate => "pirate",
         }
     }
 
@@ -302,6 +306,8 @@ impl TagExampleInfo for ItemTag {
             ItemTag::Material(material) => material.exemplar_identifier(),
             ItemTag::Cultist => Some("common.items.tag_examples.cultist"),
             ItemTag::Gnarling => Some("common.items.tag_examples.gnarling"),
+            ItemTag::Witch => Some("common.items.tag_examples.witch"),
+            ItemTag::Pirate => Some("common.items.tag_examples.pirate"),
             ItemTag::MaterialKind(_)
             | ItemTag::Potion
             | ItemTag::Food
@@ -495,6 +501,10 @@ pub struct PickupItem {
     created_at: ProgramTime,
     /// This [`ProgramTime`] only makes sense on the server
     next_merge_check: ProgramTime,
+    /// When set to `true`, this item will actively try to be merged into nearby
+    /// items of the same kind (see [`Item::can_merge`]). Currently only used
+    /// for inventory dropped items to prevent entity DoS.
+    pub should_merge: bool,
 }
 
 /// Newtype around [`Item`] so that thrown projectiles can track which item
@@ -649,7 +659,7 @@ impl ItemBase {
 // TODO: could this theorectically hold a ref to the actual components and
 // lazily get their IDs for hash/partialeq/debug/to_owned/etc? (i.e. eliminating
 // `Vec`s)
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ItemDefinitionId<'a> {
     Simple(Cow<'a, str>),
     Modular {
@@ -1609,11 +1619,12 @@ impl FrontendItem {
 }
 
 impl PickupItem {
-    pub fn new(item: Item, time: ProgramTime) -> Self {
+    pub fn new(item: Item, time: ProgramTime, should_merge: bool) -> Self {
         Self {
             items: vec![item],
             created_at: time,
             next_merge_check: time,
+            should_merge,
         }
     }
 
@@ -1655,7 +1666,7 @@ impl PickupItem {
         let self_item = self.item();
         let other_item = other.item();
 
-        self_item.can_merge(other_item)
+        self.should_merge && other.should_merge && self_item.can_merge(other_item)
     }
 
     // Attempt to merge another PickupItem into this one, can only fail if

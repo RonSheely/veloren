@@ -17,11 +17,12 @@ use common::{
     },
     consts::MAX_PICKUP_RANGE,
     event::{
-        BuffEvent, CreateItemDropEvent, CreateObjectEvent, DeleteEvent, EmitExt, HealthChangeEvent,
-        InventoryManipEvent, PoiseChangeEvent, TamePetEvent,
+        BuffEvent, ChangeBodyEvent, CreateItemDropEvent, CreateObjectEvent, DeleteEvent, EmitExt,
+        HealthChangeEvent, InventoryManipEvent, PoiseChangeEvent, TamePetEvent,
     },
     event_emitters,
     mounting::VolumePos,
+    outcome::Outcome,
     recipe::{self, RecipeBookManifest, default_component_recipe_book, default_repair_recipe_book},
     resources::{ProgramTime, Time},
     terrain::{Block, SpriteKind, sprite},
@@ -66,6 +67,8 @@ event_emitters! {
         health_change: HealthChangeEvent,
         poise_change: PoiseChangeEvent,
         buff: BuffEvent,
+        change_body: ChangeBodyEvent,
+        outcome: Outcome,
     }
 }
 #[derive(SystemData)]
@@ -257,14 +260,18 @@ impl ServerEvent for InventoryManipEvent {
                             // If we had a `reinsert_item`, merge returned_item into it
                             let returned_item = if let Some(mut reinsert_item) = reinsert_item {
                                 reinsert_item
-                                    .try_merge(PickupItem::new(returned_item, *data.program_time))
+                                    .try_merge(PickupItem::new(
+                                        returned_item,
+                                        *data.program_time,
+                                        true,
+                                    ))
                                     .expect(
                                         "We know this item must be mergeable since it is a \
                                          duplicate",
                                     );
                                 reinsert_item
                             } else {
-                                PickupItem::new(returned_item, *data.program_time)
+                                PickupItem::new(returned_item, *data.program_time, true)
                             };
 
                             // Inventory was full, so we need to put back the item (note that we
@@ -524,7 +531,7 @@ impl ServerEvent for InventoryManipEvent {
                             ),
                             vel: comp::Vel(Vec3::zero()),
                             ori: data.orientations.get(entity).copied().unwrap_or_default(),
-                            item: PickupItem::new(item, *data.program_time),
+                            item: PickupItem::new(item, *data.program_time, true),
                             loot_owner: Some(LootOwner::new(LootOwnerKind::Player(*uid), false)),
                         });
                     }
@@ -564,7 +571,7 @@ impl ServerEvent for InventoryManipEvent {
                                                         .get(entity)
                                                         .copied()
                                                         .unwrap_or_default(),
-                                                    PickupItem::new(item, *data.program_time),
+                                                    PickupItem::new(item, *data.program_time, true),
                                                     *uid,
                                                 )
                                             }),
@@ -685,7 +692,7 @@ impl ServerEvent for InventoryManipEvent {
                                                 .get(entity)
                                                 .copied()
                                                 .unwrap_or_default(),
-                                            PickupItem::new(item, *data.program_time),
+                                            PickupItem::new(item, *data.program_time, true),
                                             *uid,
                                         )
                                     }));
@@ -713,6 +720,8 @@ impl ServerEvent for InventoryManipEvent {
                                         data.stats.get(entity),
                                         data.masses.get(entity),
                                         None,
+                                        data.bodies.get(entity),
+                                        data.positions.get(entity),
                                     );
                                 }
                             },
@@ -730,6 +739,8 @@ impl ServerEvent for InventoryManipEvent {
                                         data.stats.get(entity),
                                         data.masses.get(entity),
                                         None,
+                                        data.bodies.get(entity),
+                                        data.positions.get(entity),
                                     );
                                 }
                             },
@@ -746,6 +757,8 @@ impl ServerEvent for InventoryManipEvent {
                                     data.stats.get(entity),
                                     data.masses.get(entity),
                                     None,
+                                    data.bodies.get(entity),
+                                    data.positions.get(entity),
                                 );
                             },
                         }
@@ -792,7 +805,7 @@ impl ServerEvent for InventoryManipEvent {
                                     (
                                         *pos,
                                         data.orientations.get(entity).copied().unwrap_or_default(),
-                                        PickupItem::new(item, *data.program_time),
+                                        PickupItem::new(item, *data.program_time, true),
                                         *uid,
                                     )
                                 },
@@ -860,7 +873,7 @@ impl ServerEvent for InventoryManipEvent {
                         dropped_items.push((
                             *pos,
                             data.orientations.get(entity).copied().unwrap_or_default(),
-                            PickupItem::new(item, *data.program_time),
+                            PickupItem::new(item, *data.program_time, true),
                             *uid,
                         ));
                     }
@@ -888,7 +901,7 @@ impl ServerEvent for InventoryManipEvent {
                         dropped_items.push((
                             *pos,
                             data.orientations.get(entity).copied().unwrap_or_default(),
-                            PickupItem::new(item, *data.program_time),
+                            PickupItem::new(item, *data.program_time, true),
                             *uid,
                         ));
                     }
@@ -1076,7 +1089,7 @@ impl ServerEvent for InventoryManipEvent {
                         let mut dropped: Vec<PickupItem> = Vec::new();
                         for item in crafted_items {
                             if let Err((item, _inserted)) = inventory.push(item) {
-                                let item = PickupItem::new(item, *data.program_time);
+                                let item = PickupItem::new(item, *data.program_time, true);
                                 if let Some(can_merge) =
                                     dropped.iter_mut().find(|other| other.can_merge(&item))
                                 {

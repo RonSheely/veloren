@@ -18,6 +18,12 @@ command-area_list-desc = List all build areas
 command-area_remove-desc = Removes specified build area
 command-aura-desc = Create an aura
 command-body-desc = Change your body to different species
+command-set_body_type-desc = Set your body type, Female or Male.
+command-set_body_type-not_found = That's not a valid body type.
+  Try one of:
+  { $options }
+command-set_body_type-no_body = Couldn't set body type as the target doesn't have a body.
+command-set_body_type-not_character = Can only permanently set body type if the target is a player online as a character.
 command-buff-desc = Cast a buff on player
 command-build-desc = Toggles build mode on and off
 command-ban-desc = Ban a player with a given username, for a given duration (if provided). Pass true for overwrite to alter an existing ban.
@@ -42,6 +48,8 @@ command-dummy-desc = Spawns a training dummy
 command-explosion-desc = Explodes the ground around you
 command-faction-desc = Send messages to your faction
 command-give_item-desc = Give yourself some items. For an example or to auto complete use Tab.
+command-gizmos-desc = Manage gizmo subscriptions.
+command-gizmos_range-desc = Change the range of gizmo subscriptions.
 command-goto-desc = Teleport to a position
 command-goto-rand = Teleport to a random position
 command-group-desc = Send messages to your group
@@ -252,6 +260,7 @@ command-locations-list = Available locations: { $locations }
 command-weather-valid-values = Valid values are 'clear', 'rain', 'wind' and 'storm'.
 command-scale-set = Set scale to { $scale }
 command-repaired-items = Repaired all equipped items
+command-repaired-inventory_items = Repaired all items
 command-message-group-missing = You are using group chat but do not belong to a group. Use /world or
   /region to change chat.
 command-tell-to-yourself = You can't /tell yourself.
