@@ -32,6 +32,12 @@ use specs::{Entity as EcsEntity, ReadStorage};
 use std::ops::{Mul, MulAssign};
 use vek::*;
 
+pub enum AttackTarget {
+    AllInRange(f32),
+    Pos(Vec3<f32>),
+    Entity(EcsEntity),
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum GroupTarget {
     InGroup,
@@ -39,7 +45,7 @@ pub enum GroupTarget {
     All,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum AttackSource {
     Melee,
     Projectile,
@@ -221,6 +227,7 @@ impl Attack {
                             time,
                         },
                     });
+
                     block_strength
                 } else {
                     0.0
@@ -1244,7 +1251,8 @@ impl Damage {
 
         let penetration = if let Some(damage) = damage {
             if let DamageKind::Piercing = damage.kind {
-                (damage.value * PIERCING_PENETRATION_FRACTION).clamp(0.0, protection.unwrap_or(0.0))
+                (damage.value * PIERCING_PENETRATION_FRACTION)
+                    .clamp(0.0, protection.unwrap_or(0.0).max(0.0))
             } else {
                 0.0
             }

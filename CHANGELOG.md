@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serverside gizmos for debugging things like pathfinding.
 - A potion which permanently changes the characters body type.
 - Internal settings for audio samplerate and buffer size.
+- Added fire gigas
+- Consumables drop their container after getting consumed.
+- Added separate settings to toggle rain effects
 
 ### Changed
 
@@ -82,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated Tidal Warrior model.
 - Emitted sfx now take into account both player and camera position, instead of just camera position, when determining volume.
 - Danari horns are now showed when wearing a hat or helmet.
+- Debuff icons have been updated to be more vibrant and identifiable. 
 
 ### Removed
 
@@ -114,6 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desert area wildlife is back to spawning in hot temperatures.
 - Ambience (e.g. wind) loops properly.
 - Can no longer get bags with items still in them into the inventory by "using" another bag.
+- Npcs don't get angry if you kill a monster infront of them, and can get happy if you saved them from it.
+- Map markers are kept between character selection screens.
 
 ## [0.17.0] - 2024-12-28
 

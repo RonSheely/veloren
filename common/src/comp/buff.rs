@@ -70,9 +70,8 @@ pub enum BuffKind {
     /// Strength scales the movement speed linearly. 0.5 is 150% speed, 1.0 is
     /// 200% speed. Provides regeneration at 10x the value of the strength.
     Frenzied,
-    /// Increases movement and attack speed, but removes chance to get critical
-    /// hits. Strength scales strength of both effects linearly. 0.5 is a
-    /// 50% increase, 1.0 is a 100% increase.
+    /// Increases movement and attack speed Strength scales strength of both
+    /// effects linearly. 0.5 is a 50% increase, 1.0 is a 100% increase.
     Hastened,
     /// Increases resistance to incoming poise, and poise damage dealt as health
     /// is lost.
@@ -116,13 +115,9 @@ pub enum BuffKind {
     /// penetration. Energy reward is increased linearly to strength, 1.0 is a
     /// 150 % increase.
     Sunderer,
-    /// Increases damage resistance and poise resistance, causes combo to be
-    /// generated when damaged, and decreases movement speed.
-    /// Damage resistance increases non-linearly with strength, 0.5 is 50% and
-    /// 1.0 is 67%. Poise resistance increases non-linearly with strength, 0.5
-    /// is 50% and 1.0 is 67%. Movement speed is decreased to 50%. Combo
-    /// generation is linear with strength, 1.0 is 5 combo generated on being
-    /// hit.
+    /// Generates combo when damaged and decreases movement speed.
+    /// Movement speed is decreased to 50%. Combo generation is linear with
+    /// strength, 1.0 is 5 combo generated on being hit.
     Defiance,
     /// Increases both attack damage, vulnerability to damage, attack speed, and
     /// movement speed Damage increases linearly with strength, 1.0 is a
@@ -140,7 +135,7 @@ pub enum BuffKind {
     ScornfulTaunt,
     /// Increases damage resistance, causes energy to be generated when damaged,
     /// and decreases movement speed. Damage resistance increases non-linearly
-    /// with strength, 0.5 is 50% and 1.0 is 67%. Energy generation is linear
+    /// with strength, 0.5 is 25% and 1.0 is 34%. Energy generation is linear
     /// with strength, 1.0 is 10 energy per hit. Movement speed is decreased to
     /// 70%.
     Tenacity,
@@ -214,11 +209,11 @@ pub enum BuffKind {
     Winded,
     /// Prevents use of auxiliary abilities.
     /// Does not scale with strength
-    Concussion,
+    Amnesia,
     /// Increases amount of poise damage received
     /// Scales linearly with strength, 1.0 leads to 100% more poise damage
     /// received
-    Staggered,
+    OffBalance,
     // =================
     //      COMPLEX
     // =================
@@ -290,8 +285,8 @@ impl BuffKind {
             | BuffKind::Heatstroke
             | BuffKind::Rooted
             | BuffKind::Winded
-            | BuffKind::Concussion
-            | BuffKind::Staggered => BuffDescriptor::SimpleNegative,
+            | BuffKind::Amnesia
+            | BuffKind::OffBalance => BuffDescriptor::SimpleNegative,
             BuffKind::Polymorphed => BuffDescriptor::Complex,
         }
     }
@@ -463,7 +458,6 @@ impl BuffKind {
             BuffKind::Hastened => vec![
                 BuffEffect::MovementSpeed(1.0 + data.strength),
                 BuffEffect::AttackSpeed(1.0 + data.strength),
-                BuffEffect::PrecisionOverride(0.0),
             ],
             BuffKind::Fortitude => vec![
                 BuffEffect::PoiseReduction(nn_scaling(data.strength)),
@@ -522,8 +516,6 @@ impl BuffKind {
                 BuffEffect::EnergyReward(1.0 + 1.5 * data.strength),
             ],
             BuffKind::Defiance => vec![
-                BuffEffect::DamageReduction(nn_scaling(data.strength)),
-                BuffEffect::PoiseReduction(nn_scaling(data.strength)),
                 BuffEffect::MovementSpeed(0.5),
                 BuffEffect::DamagedEffect(DamagedEffect::Combo(
                     (data.strength * 5.0).round() as i32
@@ -553,10 +545,10 @@ impl BuffKind {
                 BuffEffect::MovementSpeed(1.0 - nn_scaling2(data.strength)),
                 BuffEffect::EnergyReward(1.0 - nn_scaling(data.strength)),
             ],
-            BuffKind::Concussion => vec![BuffEffect::DisableAuxiliaryAbilities],
-            BuffKind::Staggered => vec![BuffEffect::PoiseReduction(-data.strength)],
+            BuffKind::Amnesia => vec![BuffEffect::DisableAuxiliaryAbilities],
+            BuffKind::OffBalance => vec![BuffEffect::PoiseReduction(-data.strength)],
             BuffKind::Tenacity => vec![
-                BuffEffect::DamageReduction(nn_scaling(data.strength)),
+                BuffEffect::DamageReduction(nn_scaling(data.strength) / 2.0),
                 BuffEffect::MovementSpeed(0.7),
                 BuffEffect::DamagedEffect(DamagedEffect::Energy(data.strength * 10.0)),
             ],
@@ -609,7 +601,7 @@ impl BuffKind {
     /// strength that resilience should have, otherwise return None
     pub fn resilience_ccr_strength(&self, data: BuffData) -> Option<f32> {
         match self {
-            BuffKind::Concussion => Some(0.3),
+            BuffKind::Amnesia => Some(0.3),
             BuffKind::Frozen => Some(data.strength),
             _ => None,
         }
@@ -642,11 +634,15 @@ impl BuffKind {
 #[serde(deny_unknown_fields, default)]
 pub struct BuffData {
     pub strength: f32,
+    #[serde(default)]
     pub duration: Option<Secs>,
+    #[serde(default)]
     pub delay: Option<Secs>,
     /// Used for buffs that have rider buffs (e.g. Flame, Frigid)
+    #[serde(default)]
     pub secondary_duration: Option<Secs>,
     /// Used to add random data to buffs if needed (e.g. polymorphed)
+    #[serde(default)]
     pub misc_data: Option<MiscBuffData>,
 }
 
@@ -1026,6 +1022,10 @@ impl Buffs {
     }
 
     pub fn contains(&self, kind: BuffKind) -> bool { self.kinds[kind].is_some() }
+
+    pub fn contains_any(&self, kinds: &[BuffKind]) -> bool {
+        kinds.iter().any(|kind| self.contains(*kind))
+    }
 
     // Iterate through buffs of a given kind in effect order (most powerful first)
     pub fn iter_kind(&self, kind: BuffKind) -> impl Iterator<Item = (BuffKey, &Buff)> + '_ {

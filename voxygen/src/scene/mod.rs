@@ -505,9 +505,10 @@ impl Scene {
                                 Rgb::new(1.0, 0.0, 0.0)
                             }
                         },
-                        Some(Reagent::Phoenix) => Rgb::new(1.0, 0.8, 0.3),
                         Some(Reagent::White) => Rgb::new(1.0, 1.0, 1.0),
                         Some(Reagent::Yellow) => Rgb::new(1.0, 1.0, 0.0),
+                        Some(Reagent::FireRain) => Rgb::new(1.0, 0.8, 0.3),
+                        Some(Reagent::FireGigas) => Rgb::new(1.0, 0.6, 0.2),
                         None => Rgb::new(1.0, 0.5, 0.0),
                     },
                     power
@@ -1362,8 +1363,13 @@ impl Scene {
             client,
         );
 
-        self.ambience_mgr
-            .maintain(audio, scene_data.state, client, &self.camera);
+        self.ambience_mgr.maintain(
+            audio,
+            &settings.audio,
+            scene_data.state,
+            client,
+            &self.camera,
+        );
 
         self.music_mgr.maintain(audio, scene_data.state, client);
     }
