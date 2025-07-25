@@ -37,9 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serverside gizmos for debugging things like pathfinding.
 - A potion which permanently changes the characters body type.
 - Internal settings for audio samplerate and buffer size.
-- Added fire gigas
+- Added fire gigas.
 - Consumables drop their container after getting consumed.
-- Added separate settings to toggle rain effects
+- Added separate settings to toggle rain effects.
+- One new overworld track.
+- Pirates sometimes going to raid towns.
+- Croatian language support.
 
 ### Changed
 
@@ -86,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Emitted sfx now take into account both player and camera position, instead of just camera position, when determining volume.
 - Danari horns are now showed when wearing a hat or helmet.
 - Debuff icons have been updated to be more vibrant and identifiable. 
+- Made hammer skills descrptions clearer.
 
 ### Removed
 
@@ -120,6 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Can no longer get bags with items still in them into the inventory by "using" another bag.
 - Npcs don't get angry if you kill a monster infront of them, and can get happy if you saved them from it.
 - Map markers are kept between character selection screens.
+- Using "/clear" now works when chat is not shown.
 
 ## [0.17.0] - 2024-12-28
 

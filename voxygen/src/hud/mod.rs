@@ -2121,7 +2121,7 @@ impl Hud {
                         i18n.get_msg("hud-use").to_string(),
                         overitem::TEXT_COLOR,
                     ),
-                    BlockInteraction::Unlock(kind) => {
+                    BlockInteraction::Unlock { kind, steal } => {
                         let item_name = |item_id: &ItemDefinitionIdOwned| {
                             // TODO: get ItemKey and use it with i18n?
                             item_id
@@ -2137,19 +2137,39 @@ impl Hud {
                         (
                             Some(GameInput::Interact),
                             match kind {
-                                UnlockKind::Free => i18n.get_msg("hud-open").to_string(),
+                                UnlockKind::Free => i18n
+                                    .get_msg(if *steal { "hud-steal" } else { "hud-open" })
+                                    .to_string(),
                                 UnlockKind::Requires(item_id) => i18n
-                                    .get_msg_ctx("hud-unlock-requires", &i18n::fluent_args! {
-                                        "item" => item_name(item_id),
-                                    })
+                                    .get_msg_ctx(
+                                        if *steal {
+                                            "hud-steal-requires"
+                                        } else {
+                                            "hud-unlock-requires"
+                                        },
+                                        &i18n::fluent_args! {
+                                            "item" => item_name(item_id),
+                                        },
+                                    )
                                     .to_string(),
                                 UnlockKind::Consumes(item_id) => i18n
-                                    .get_msg_ctx("hud-unlock-requires", &i18n::fluent_args! {
-                                        "item" => item_name(item_id),
-                                    })
+                                    .get_msg_ctx(
+                                        if *steal {
+                                            "hud-steal-consumes"
+                                        } else {
+                                            "hud-unlock-consumes"
+                                        },
+                                        &i18n::fluent_args! {
+                                            "item" => item_name(item_id),
+                                        },
+                                    )
                                     .to_string(),
                             },
-                            overitem::TEXT_COLOR,
+                            if *steal {
+                                overitem::NEGATIVE_TEXT_COLOR
+                            } else {
+                                overitem::TEXT_COLOR
+                            },
                         )
                     },
                     BlockInteraction::Mine(mine_tool) => {
@@ -3608,6 +3628,9 @@ impl Hud {
                     },
                 }
             }
+
+            // Set to false only after the chat widget is cleared and updated
+            self.clear_chat = false;
         } else {
             let mut persisted_state = self.persisted_state.borrow_mut();
             for message in self.new_messages.drain(..) {
@@ -3619,7 +3642,6 @@ impl Hud {
 
         self.new_messages.clear();
         self.new_notifications.clear();
-        self.clear_chat = false;
 
         // Windows
 
