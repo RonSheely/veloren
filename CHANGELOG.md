@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made space for airship travel agent at docks.
 - Hired adventurers will now go to taverns in towns while the employer stays in the town.
 - New hide lineage armor set known as Serpentscale.
+- Added more varieties of house-building materials
+- New LoD models for all five AirshipDock plots.
 
 ### Changed
 
@@ -91,12 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated Tidal Warrior model.
 - Emitted sfx now take into account both player and camera position, instead of just camera position, when determining volume.
 - Danari horns are now showed when wearing a hat or helmet.
-- Debuff icons have been updated to be more vibrant and identifiable. 
+- Debuff icons have been updated to be more vibrant and identifiable.
 - Made hammer skills descrptions clearer.
 - Updated airship docks to add more space between docking platforms.
 - Airships now travel along routes of many docks rather than out and back between two docks.
 - Airship docking time is reduced from 90 to 60 seconds.
 - All hide lienage armor sets now have helmets.
+- Increased gem spawn rates in caves; each gem node has a specific biome in which they generate more frequently.
+- Cliff town airship docks now have extra space around the dock to preclude taller cliff buildings from interferring.
 
 ### Removed
 
@@ -132,6 +136,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Npcs don't get angry if you kill a monster infront of them, and can get happy if you saved them from it.
 - Map markers are kept between character selection screens.
 - Using "/clear" now works when chat is not shown.
+- A server crash when loading some myrmion arenas.
+- Fixed agents spamming healing items, causing them not to heal.
+- Fixed agents not picking up their items.
+- Fixed the issue where cliff town airship docks were sometimes missing.
 
 ## [0.17.0] - 2024-12-28
 

@@ -614,6 +614,7 @@ widget_ids! {
         inventory_title,
         inventory_title_bg,
         inventory_sort,
+        inventory_sort_selected,
         scrollbar_bg,
         scrollbar_slots,
         tab_1,
@@ -751,7 +752,8 @@ pub struct BagState {
 pub enum Event {
     BagExpand,
     Close,
-    SortInventory,
+    ChangeInventorySortOrder(InventorySortOrder),
+    SortInventory(InventorySortOrder),
     SwapEquippedWeapons,
     SetDetailsMode(bool),
 }
@@ -777,7 +779,6 @@ impl Widget for Bag<'_> {
         common_base::prof_span!("Bag::update");
         let widget::UpdateArgs { state, ui, .. } = args;
         let i18n = &self.localized_strings;
-        let key_layout = &self.global_state.window.key_layout;
 
         let mut event = None;
         let bag_tooltip = Tooltip::new({
@@ -939,15 +940,42 @@ impl Widget for Bag<'_> {
             event = Some(Event::BagExpand);
         }
 
-        // Sort inventory button
+        // Sort mode inventory button
         if Button::image(self.imgs.inv_sort_btn)
             .w_h(30.0, 17.0)
             .hover_image(self.imgs.inv_sort_btn_hover)
             .press_image(self.imgs.inv_sort_btn_press)
+            .top_left_with_margins_on(state.bg_ids.bg_frame, buttons_top, 87.0) // 30 + 10 + 47
+            .with_tooltip(
+                self.tooltip_manager,
+                &(match self.global_state.settings.inventory.sort_order.next() {
+                    InventorySortOrder::Name => i18n.get_msg("hud-bag-change_to_sort_by_name"),
+                    InventorySortOrder::Quality => i18n.get_msg("hud-bag-change_to_sort_by_quality"),
+                    InventorySortOrder::Category => i18n.get_msg("hud-bag-change_to_sort_by_category"),
+                    InventorySortOrder::Tag => i18n.get_msg("hud-bag-change_to_sort_by_tag"),
+                    InventorySortOrder::Amount => i18n.get_msg("hud-bag-change_to_sort_by_quantity"),
+                }),
+                "",
+                &tooltip,
+                color::WHITE,
+            )
+            .set(state.ids.inventory_sort, ui)
+            .was_clicked()
+        {
+            // cycle sorting mode
+            event = Some(Event::ChangeInventorySortOrder(
+                self.global_state.settings.inventory.sort_order.next(),
+            ));
+        }
+        // Sort inventory button with selected mode
+        if Button::image(self.imgs.inv_sort_selected_btn)
+            .w_h(30.0, 17.0)
+            .hover_image(self.imgs.inv_sort_selected_btn_hover)
+            .press_image(self.imgs.inv_sort_selected_btn_press)
             .top_left_with_margins_on(state.bg_ids.bg_frame, buttons_top, 47.0)
             .with_tooltip(
                 self.tooltip_manager,
-                &(match inventory.next_sort_order() {
+                &(match self.global_state.settings.inventory.sort_order {
                     InventorySortOrder::Name => i18n.get_msg("hud-bag-sort_by_name"),
                     InventorySortOrder::Quality => i18n.get_msg("hud-bag-sort_by_quality"),
                     InventorySortOrder::Category => i18n.get_msg("hud-bag-sort_by_category"),
@@ -958,10 +986,12 @@ impl Widget for Bag<'_> {
                 &tooltip,
                 color::WHITE,
             )
-            .set(state.ids.inventory_sort, ui)
+            .set(state.ids.inventory_sort_selected, ui)
             .was_clicked()
         {
-            event = Some(Event::SortInventory);
+            event = Some(Event::SortInventory(
+                self.global_state.settings.inventory.sort_order,
+            ));
         }
 
         // Armor Slots
@@ -1364,7 +1394,7 @@ impl Widget for Bag<'_> {
                         i18n.get_msg_ctx(
                             "hud-bag-swap_equipped_weapons_desc",
                             &i18n::fluent_args! {
-                                "key" => key.display_string(key_layout)
+                                "key" => key.display_string()
                             },
                         )
                     } else {
