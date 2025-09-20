@@ -34,7 +34,7 @@ use strum::Display;
 use tracing::{debug, error, info, warn};
 
 use common::{
-    assets::{AssetExt, AssetHandle},
+    assets::{AssetExt, AssetHandle, Ron},
     comp::Ori,
 };
 use vek::*;
@@ -339,7 +339,7 @@ pub struct AudioFrontend {
     music_spacing: f32,
     pub combat_music_enabled: bool,
 
-    mtm: AssetHandle<MusicTransitionManifest>,
+    mtm: AssetHandle<Ron<MusicTransitionManifest>>,
 }
 
 impl AudioFrontend {
@@ -356,52 +356,49 @@ impl AudioFrontend {
         let mut device = cpal::default_host().default_output_device();
         let mut supported_config = None;
         let mut samplerate = 44100;
-        if let Some(device) = device.as_mut() {
-            if let Ok(default_output_config) = device.default_output_config() {
-                info!(
-                    "Current default samplerate: {:?}",
-                    default_output_config.sample_rate().0
+        if let Some(device) = device.as_mut()
+            && let Ok(default_output_config) = device.default_output_config()
+        {
+            info!(
+                "Current default samplerate: {:?}",
+                default_output_config.sample_rate().0
+            );
+            samplerate = default_output_config.sample_rate().0;
+            if samplerate > 48000 && set_samplerate.is_none() {
+                warn!(
+                    "Current default samplerate is higher than 48000; attempting to lower \
+                     samplerate"
                 );
-                samplerate = default_output_config.sample_rate().0;
-                if samplerate > 48000 && set_samplerate.is_none() {
-                    warn!(
-                        "Current default samplerate is higher than 48000; attempting to lower \
-                         samplerate"
-                    );
-                    let supported_configs = device.supported_output_configs();
-                    if let Ok(supported_configs) = supported_configs {
-                        let best_config = supported_configs.max_by(|x, y| {
-                            SupportedStreamConfigRange::cmp_default_heuristics(x, y)
-                        });
-                        if let Some(best_config) = best_config {
-                            warn!("Attempting to change samplerate to 48khz");
-                            supported_config = best_config.try_with_sample_rate(SampleRate(48000));
-                            if supported_config.is_none() {
-                                warn!("Attempting to change samplerate to 44.1khz");
-                                supported_config =
-                                    best_config.try_with_sample_rate(SampleRate(44100));
-                            }
-                            if supported_config.is_none() {
-                                warn!("Could not change samplerate, using default")
-                            }
+                let supported_configs = device.supported_output_configs();
+                if let Ok(supported_configs) = supported_configs {
+                    let best_config = supported_configs
+                        .max_by(SupportedStreamConfigRange::cmp_default_heuristics);
+                    if let Some(best_config) = best_config {
+                        warn!("Attempting to change samplerate to 48khz");
+                        supported_config = best_config.try_with_sample_rate(SampleRate(48000));
+                        if supported_config.is_none() {
+                            warn!("Attempting to change samplerate to 44.1khz");
+                            supported_config = best_config.try_with_sample_rate(SampleRate(44100));
+                        }
+                        if supported_config.is_none() {
+                            warn!("Could not change samplerate, using default")
                         }
                     }
-                } else if let Some(set_samplerate) = set_samplerate {
-                    let supported_configs = device.supported_output_configs();
-                    if let Ok(supported_configs) = supported_configs {
-                        let best_config = supported_configs.max_by(|x, y| {
-                            SupportedStreamConfigRange::cmp_default_heuristics(x, y)
-                        });
-                        if let Some(best_config) = best_config {
-                            warn!("Attempting to force samplerate to {:?}", set_samplerate);
-                            supported_config =
-                                best_config.try_with_sample_rate(SampleRate(set_samplerate));
-                            if supported_config.is_none() {
-                                error!(
-                                    "Could not set samplerate to {:?}, falling back to default.",
-                                    set_samplerate
-                                );
-                            }
+                }
+            } else if let Some(set_samplerate) = set_samplerate {
+                let supported_configs = device.supported_output_configs();
+                if let Ok(supported_configs) = supported_configs {
+                    let best_config = supported_configs
+                        .max_by(SupportedStreamConfigRange::cmp_default_heuristics);
+                    if let Some(best_config) = best_config {
+                        warn!("Attempting to force samplerate to {:?}", set_samplerate);
+                        supported_config =
+                            best_config.try_with_sample_rate(SampleRate(set_samplerate));
+                        if supported_config.is_none() {
+                            error!(
+                                "Could not set samplerate to {:?}, falling back to default.",
+                                set_samplerate
+                            );
                         }
                     }
                 }
@@ -535,6 +532,7 @@ impl AudioFrontend {
 
             if let Some(current_channel) = inner.channels.music.iter_mut().find(|c| !c.is_done()) {
                 let (fade_out, _fade_in) = mtm
+                    .0
                     .fade_timings
                     .get(&(current_channel.get_tag(), channel_tag))
                     .unwrap_or(&(1.0, 1.0));
@@ -556,6 +554,7 @@ impl AudioFrontend {
             };
 
             let (fade_out, fade_in) = mtm
+                .0
                 .fade_timings
                 .get(&(channel.get_tag(), channel_tag))
                 .unwrap_or(&(1.0, 0.1));
@@ -612,7 +611,7 @@ impl AudioFrontend {
                     .expect("Failed to determine sound file for this trigger item."),
                 _ => {
                     // If more than one file is listed, choose one at random
-                    let rand_step = rand::random::<usize>() % item.files.len();
+                    let rand_step = (rand::random::<u64>() as usize) % item.files.len();
                     &item.files[rand_step]
                 },
             };
@@ -718,16 +717,16 @@ impl AudioFrontend {
         position: Option<Vec3<f32>>,
         duration: f32,
     ) {
-        if self.subtitles_enabled {
-            if let Some(subtitle) = subtitle {
-                self.subtitles.push_back(Subtitle {
-                    localization: subtitle.to_string(),
-                    position,
-                    show_for: duration as f64,
-                });
-                if self.subtitles.len() > 10 {
-                    self.subtitles.pop_front();
-                }
+        if self.subtitles_enabled
+            && let Some(subtitle) = subtitle
+        {
+            self.subtitles.push_back(Subtitle {
+                localization: subtitle.to_string(),
+                position,
+                show_for: duration as f64,
+            });
+            if self.subtitles.len() > 10 {
+                self.subtitles.pop_front();
             }
         }
     }

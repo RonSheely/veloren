@@ -21,7 +21,7 @@ use crate::{
 #[cfg(feature = "worldgen")]
 use common::{cmd::SPOT_PARSER, spot::Spot};
 
-use assets::AssetExt;
+use assets::{AssetExt, Ron};
 use authc::Uuid;
 use chrono::{DateTime, NaiveTime, Timelike, Utc};
 use common::{
@@ -76,7 +76,7 @@ use common_state::{Areas, AreasContainer, BuildArea, NoDurabilityArea, SpecialAr
 use core::{cmp::Ordering, convert::TryFrom};
 use hashbrown::{HashMap, HashSet};
 use humantime::Duration as HumanDuration;
-use rand::{Rng, thread_rng};
+use rand::{Rng, rng};
 use specs::{Builder, Entity as EcsEntity, Join, LendJoin, WorldExt, storage::StorageEntry};
 use std::{
     fmt::Write, net::SocketAddr, num::NonZeroU32, ops::DerefMut, str::FromStr, sync::Arc,
@@ -584,18 +584,22 @@ fn handle_drop_all(
         items = inventory.drain().collect();
     }
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let item_to_place = items
         .into_iter()
         .filter(|i| !matches!(i.quality(), Quality::Debug));
     for item in item_to_place {
-        let vel = Vec3::new(rng.gen_range(-0.1..0.1), rng.gen_range(-0.1..0.1), 0.5);
+        let vel = Vec3::new(
+            rng.random_range(-0.1..0.1),
+            rng.random_range(-0.1..0.1),
+            0.5,
+        );
 
         server.state.create_item_drop(
             comp::Pos(Vec3::new(
-                pos.0.x + rng.gen_range(5.0..10.0),
-                pos.0.y + rng.gen_range(5.0..10.0),
+                pos.0.x + rng.random_range(5.0..10.0),
+                pos.0.y + rng.random_range(5.0..10.0),
                 pos.0.z + 5.0,
             )),
             comp::Ori::default(),
@@ -857,7 +861,7 @@ fn handle_into_npc(
         return Err(action.help_content());
     };
 
-    let config = match EntityConfig::load(&entity_config) {
+    let config = match Ron::<EntityConfig>::load(&entity_config) {
         Ok(asset) => asset.read(),
         Err(_err) => {
             return Err(Content::localized_with_args(
@@ -867,7 +871,7 @@ fn handle_into_npc(
         },
     };
 
-    let mut loadout_rng = thread_rng();
+    let mut loadout_rng = rng();
     let entity_info = EntityInfo::at(
         server
             .state
@@ -875,7 +879,12 @@ fn handle_into_npc(
             .map(|p| p.0)
             .unwrap_or_default(),
     )
-    .with_entity_config(config.clone(), Some(&entity_config), &mut loadout_rng, None);
+    .with_entity_config(
+        config.clone().into_inner(),
+        Some(&entity_config),
+        &mut loadout_rng,
+        None,
+    );
 
     transform_entity(server, target, entity_info, true).map_err(|error| match error {
         TransformEntityError::EntityDead => {
@@ -918,7 +927,7 @@ fn handle_make_npc(
         None => 1,
     };
 
-    let config = match EntityConfig::load(&entity_config) {
+    let config = match Ron::<EntityConfig>::load(&entity_config) {
         Ok(asset) => asset.read(),
         Err(_err) => {
             return Err(Content::localized_with_args(
@@ -928,11 +937,11 @@ fn handle_make_npc(
         },
     };
 
-    let mut loadout_rng = thread_rng();
+    let mut loadout_rng = rng();
     for _ in 0..number {
         let comp::Pos(pos) = position(server, target, "target")?;
         let entity_info = EntityInfo::at(pos).with_entity_config(
-            config.clone(),
+            config.clone().into_inner(),
             Some(&entity_config),
             &mut loadout_rng,
             None,
@@ -1004,7 +1013,7 @@ fn handle_make_sprite(
 
             Ok(())
         } else if let Ok(sprite) = ron::from_str::<StructureSprite>(sprite_name.as_str()) {
-            set_block(sprite.get_block(|s| old_block.with_sprite(s)));
+            set_block(sprite.apply_to_block(old_block).unwrap_or_else(|b| b));
 
             Ok(())
         } else {
@@ -1310,12 +1319,12 @@ fn handle_goto_rand(
     args: Vec<String>,
     _action: &ServerChatCommand,
 ) -> CmdResult<()> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let map_size = server.world.sim().map_size_lg().vec();
     let chunk_side = 2_u32.pow(TERRAIN_CHUNK_BLOCKS_LG);
     let pos2d = Vec2::new(
-        rng.gen_range(0..(2_u32.pow(map_size.x) * chunk_side)) as f32,
-        rng.gen_range(0..(2_u32.pow(map_size.y) * chunk_side)) as f32,
+        rng.random_range(0..(2_u32.pow(map_size.x) * chunk_side)) as f32,
+        rng.random_range(0..(2_u32.pow(map_size.y) * chunk_side)) as f32,
     );
     let pos3d = pos2d.with_z(server.world.sim().get_surface_alt_approx(pos2d.as_()));
     server.state.position_mut(
@@ -1359,8 +1368,6 @@ fn resolve_site(
     common::store::Id<world::site::Site>,
     Option<common::store::Id<world::site::Plot>>,
 )> {
-    use rand::seq::IteratorRandom;
-
     if let Some(id) = key.strip_prefix("rtsim@") {
         let id = id
             .parse::<u64>()
@@ -1390,6 +1397,7 @@ fn resolve_site(
     }
 
     if let Some(plot_name) = key.strip_prefix("plot:") {
+        use rand::seq::IteratorRandom;
         let plot_name = plot_name.to_lowercase();
         return server
             .index
@@ -1401,7 +1409,7 @@ fn resolve_site(
                     .filter(|(_, plot)| plot.kind().to_string().to_lowercase().contains(&plot_name))
                     .map(move |(plot_id, _)| (id, Some(plot_id)))
             })
-            .choose(&mut thread_rng())
+            .choose(&mut rng())
             .ok_or_else(|| {
                 Content::Plain(format!("Couldn't find a plot with the key '{plot_name}'"))
             });
@@ -1411,7 +1419,7 @@ fn resolve_site(
         .index
         .sites
         .iter()
-        .find(|(_, site)| site.name() == key)
+        .find(|(_, site)| site.name() == Some(key))
         .map(|(id, _)| (id, None))
         .ok_or_else(|| Content::localized("command-site-not-found"))
 }
@@ -1939,8 +1947,27 @@ fn handle_rtsim_info(
     action: &ServerChatCommand,
 ) -> CmdResult<()> {
     use crate::rtsim::RtSim;
-    if let Some(id) = parse_cmd_args!(args, u64) {
-        let rtsim = server.state.ecs().read_resource::<RtSim>();
+    let rtsim = server.state.ecs().read_resource::<RtSim>();
+    let id = parse_cmd_args!(args.clone(), u64)
+        .map(Ok)
+        .or_else(|| {
+            let entity = parse_cmd_args!(args, EntityTarget)?;
+            let entity = match get_entity_target(entity, server) {
+                Ok(e) => e,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let npc_id = *server
+                .state
+                .ecs()
+                .read_storage::<common::rtsim::RtSimEntity>()
+                .get(entity)?;
+
+            Some(Ok(rtsim.state().data().npcs.get(npc_id)?.uid))
+        })
+        .transpose()?;
+
+    if let Some(id) = id {
         let data = rtsim.state().data();
         let (id, npc) = data
             .npcs
@@ -2004,7 +2031,7 @@ fn handle_rtsim_npc(
             .filter(|s| !s.is_empty())
             .map(|s| s.trim().to_lowercase())
             .collect::<Vec<_>>();
-        let npc_names = &*common::npc::NPC_NAMES.read();
+        let npc_names = &common::npc::NPC_NAMES.read();
         let rtsim = server.state.ecs().read_resource::<RtSim>();
         let data = rtsim.state().data();
         let mut npcs = data
@@ -2045,7 +2072,12 @@ fn handle_rtsim_npc(
 
         let _ = writeln!(&mut info, "-- NPCs matching [{}] --", terms.join(", "));
         for npc in npcs.iter().take(count.unwrap_or(!0) as usize) {
-            let _ = write!(&mut info, "{} ({}), ", npc.get_name(), npc.uid);
+            let _ = write!(
+                &mut info,
+                "{} ({}), ",
+                npc.get_name().as_deref().unwrap_or("<unknown>"),
+                npc.uid
+            );
         }
         let _ = writeln!(&mut info);
         let _ = writeln!(
@@ -2118,6 +2150,13 @@ fn handle_rtsim_chunk(
     let rtsim = server.state.ecs().read_resource::<RtSim>();
     let data = rtsim.state().data();
 
+    let oob_err = || {
+        Content::localized_with_args("command-chunk-out-of-bounds", [
+            ("x", chunk_key.x.to_string()),
+            ("y", chunk_key.y.to_string()),
+        ])
+    };
+
     let chunk_states = rtsim.state().resource::<ChunkStates>();
     let chunk_state = match chunk_states.0.get(chunk_key) {
         Some(Some(chunk_state)) => chunk_state,
@@ -2128,13 +2167,7 @@ fn handle_rtsim_chunk(
             ]));
         },
         None => {
-            return Err(Content::localized_with_args(
-                "command-chunk-out-of-bounds",
-                [
-                    ("x", chunk_key.x.to_string()),
-                    ("y", chunk_key.y.to_string()),
-                ],
-            ));
+            return Err(oob_err());
         },
     };
 
@@ -2144,7 +2177,7 @@ fn handle_rtsim_chunk(
         "-- Chunk {}, {} Resources --",
         chunk_key.x, chunk_key.y
     );
-    for (res, frac) in data.nature.get_chunk_resources(chunk_key) {
+    for (res, frac) in data.nature.chunk_resources(chunk_key).ok_or_else(oob_err)? {
         let total = chunk_state.max_res[res];
         let _ = writeln!(
             &mut info,
@@ -2210,8 +2243,8 @@ fn handle_spawn(
 
             for _ in 0..amount {
                 let vel = Vec3::new(
-                    thread_rng().gen_range(-2.0..3.0),
-                    thread_rng().gen_range(-2.0..3.0),
+                    rng().random_range(-2.0..3.0),
+                    rng().random_range(-2.0..3.0),
                     10.0,
                 );
 
@@ -2308,8 +2341,8 @@ fn handle_spawn_training_dummy(
 ) -> CmdResult<()> {
     let pos = position(server, target, "target")?;
     let vel = Vec3::new(
-        thread_rng().gen_range(-2.0..3.0),
-        thread_rng().gen_range(-2.0..3.0),
+        rng().random_range(-2.0..3.0),
+        rng().random_range(-2.0..3.0),
         10.0,
     );
 
@@ -2369,7 +2402,7 @@ fn handle_spawn_airship(
             .find(|body| format!("{body:?}") == body_name)
             .ok_or_else(|| Content::Plain(format!("No such airship '{body_name}'.")))?
     } else {
-        comp::ship::Body::random_airship_with(&mut thread_rng())
+        comp::ship::Body::random_airship_with(&mut rng())
     };
     let ori = comp::Ori::from(common::util::Dir::new(dir.unwrap_or(Vec3::unit_y())));
     let mut builder = server
@@ -2416,7 +2449,7 @@ fn handle_spawn_ship(
             .find(|body| format!("{body:?}") == body_name)
             .ok_or_else(|| Content::Plain(format!("No such airship '{body_name}'.")))?
     } else {
-        comp::ship::Body::random_airship_with(&mut thread_rng())
+        comp::ship::Body::random_airship_with(&mut rng())
     };
     let ori = comp::Ori::from(common::util::Dir::new(dir.unwrap_or(Vec3::unit_y())));
     let mut builder = server
@@ -3083,7 +3116,7 @@ fn handle_kill_npcs(
                     rtsim.hook_rtsim_actor_death(
                         &ecs.read_resource::<Arc<world::World>>(),
                         ecs.read_resource::<world::IndexOwned>().as_index_ref(),
-                        Actor::Npc(rtsim_entity.0),
+                        Actor::Npc(rtsim_entity),
                         Some(pos.0),
                         None,
                     );
@@ -3249,7 +3282,7 @@ fn push_item(
             material,
             hands,
         }) => {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             vec![
                 comp::item::modular::random_weapon(tool, material, hands, &mut rng)
                     .map_err(|err| Content::Plain(format!("{:#?}", err)))?,
@@ -3470,7 +3503,7 @@ fn handle_outcome(
         };
     }
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let outcome = arg!("command-outcome-variant_expected")?;
 
@@ -3544,7 +3577,7 @@ fn handle_outcome(
                 target: uid_arg!().unwrap_or(target_uid),
                 by: uid_arg!().map(common::combat::DamageContributor::Solo).ok(),
                 cause: None,
-                instance: rng.gen(),
+                instance: rng.random(),
             },
         },
         "Death" => Outcome::Death { pos: pos_arg!() },
@@ -4084,12 +4117,12 @@ fn handle_faction(
         drop(factions);
         insert_or_replace_component(server, target, mode.clone(), "target")?;
         let msg = args.join(" ");
-        if !msg.is_empty() {
-            if let Some(uid) = server.state.ecs().read_storage().get(target) {
-                server
-                    .state
-                    .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
-            }
+        if !msg.is_empty()
+            && let Some(uid) = server.state.ecs().read_storage().get(target)
+        {
+            server
+                .state
+                .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
         }
         server.notify_client(target, ServerGeneral::ChatMode(mode));
         Ok(())
@@ -4114,12 +4147,12 @@ fn handle_group(
         drop(groups);
         insert_or_replace_component(server, target, mode.clone(), "target")?;
         let msg = args.join(" ");
-        if !msg.is_empty() {
-            if let Some(uid) = server.state.ecs().read_storage().get(target) {
-                server
-                    .state
-                    .send_chat(mode.to_msg(*uid, Content::Plain(msg), Some(group))?, false);
-            }
+        if !msg.is_empty()
+            && let Some(uid) = server.state.ecs().read_storage().get(target)
+        {
+            server
+                .state
+                .send_chat(mode.to_msg(*uid, Content::Plain(msg), Some(group))?, false);
         }
         server.notify_client(target, ServerGeneral::ChatMode(mode));
         Ok(())
@@ -4265,12 +4298,12 @@ fn handle_region(
     let mode = comp::ChatMode::Region;
     insert_or_replace_component(server, target, mode.clone(), "target")?;
     let msg = args.join(" ");
-    if !msg.is_empty() {
-        if let Some(uid) = server.state.ecs().read_storage().get(target) {
-            server
-                .state
-                .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
-        }
+    if !msg.is_empty()
+        && let Some(uid) = server.state.ecs().read_storage().get(target)
+    {
+        server
+            .state
+            .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
     }
     server.notify_client(target, ServerGeneral::ChatMode(mode));
     Ok(())
@@ -4289,12 +4322,12 @@ fn handle_say(
     let mode = comp::ChatMode::Say;
     insert_or_replace_component(server, target, mode.clone(), "target")?;
     let msg = args.join(" ");
-    if !msg.is_empty() {
-        if let Some(uid) = server.state.ecs().read_storage().get(target) {
-            server
-                .state
-                .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
-        }
+    if !msg.is_empty()
+        && let Some(uid) = server.state.ecs().read_storage().get(target)
+    {
+        server
+            .state
+            .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
     }
     server.notify_client(target, ServerGeneral::ChatMode(mode));
     Ok(())
@@ -4313,12 +4346,12 @@ fn handle_world(
     let mode = comp::ChatMode::World;
     insert_or_replace_component(server, target, mode.clone(), "target")?;
     let msg = args.join(" ");
-    if !msg.is_empty() {
-        if let Some(uid) = server.state.ecs().read_storage().get(target) {
-            server
-                .state
-                .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
-        }
+    if !msg.is_empty()
+        && let Some(uid) = server.state.ecs().read_storage().get(target)
+    {
+        server
+            .state
+            .send_chat(mode.to_msg(*uid, Content::Plain(msg), None)?, false);
     }
     server.notify_client(target, ServerGeneral::ChatMode(mode));
     Ok(())
@@ -4410,7 +4443,7 @@ fn handle_death_effect(
 
             // We don't actually use this loaded config for anything, this is just a check
             // to ensure loading succeeds later on.
-            if EntityConfig::load(&entity_config).is_err() {
+            if Ron::<EntityConfig>::load(&entity_config).is_err() {
                 return Err(Content::localized_with_args(
                     "command-entity-load-failed",
                     [("config", entity_config)],
@@ -4806,7 +4839,7 @@ fn get_entity_target(entity_target: EntityTarget, server: &Server) -> CmdResult<
                 .state()
                 .ecs()
                 .read_resource::<common::uid::IdMaps>()
-                .rtsim_entity(common::rtsim::RtSimEntity(npc_id))
+                .rtsim_entity(npc_id)
                 .ok_or(Content::Plain(format!("Npc with id {id} isn't loaded.")))
         },
         EntityTarget::Uid(uid) => server
@@ -5425,9 +5458,11 @@ fn handle_ban_log(
                     ban.reason,
                     ban.end_date
                         .map_or_else(|| "permanent".to_string(), |end_date| end_date.to_rfc3339()),
-                    ban.upgrade_to_ip
-                        .then_some("\n  Will be upgraded to IP ban")
-                        .unwrap_or_default(),
+                    if ban.upgrade_to_ip {
+                        "\n  Will be upgraded to IP ban"
+                    } else {
+                        Default::default()
+                    },
                     ban.info
                         .as_ref()
                         .map(|info| format!("\n  {}", display_ban_info(info)))

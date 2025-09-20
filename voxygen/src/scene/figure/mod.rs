@@ -108,7 +108,7 @@ pub type FigureModelRef<'a> = (
 pub trait ModelEntry {
     fn allocation(&self) -> &guillotiere::Allocation;
 
-    fn lod_model(&self, lod: usize) -> Option<SubModel<TerrainVertex>>;
+    fn lod_model(&self, lod: usize) -> Option<SubModel<'_, TerrainVertex>>;
 
     fn atlas_textures(&self) -> &AtlasTextures<pipelines::figure::Locals, FigureSpriteAtlasData>;
 }
@@ -136,7 +136,7 @@ pub struct FigureModelEntry<const N: usize> {
 impl<const N: usize> ModelEntry for FigureModelEntry<N> {
     fn allocation(&self) -> &guillotiere::Allocation { &self.allocation }
 
-    fn lod_model(&self, lod: usize) -> Option<SubModel<TerrainVertex>> {
+    fn lod_model(&self, lod: usize) -> Option<SubModel<'_, TerrainVertex>> {
         // Note: Range doesn't impl Copy even for trivially Cloneable things
         self.model
             .opaque
@@ -178,7 +178,7 @@ pub struct TerrainModelEntry<const N: usize> {
 impl<const N: usize> ModelEntry for TerrainModelEntry<N> {
     fn allocation(&self) -> &guillotiere::Allocation { &self.allocation }
 
-    fn lod_model(&self, lod: usize) -> Option<SubModel<TerrainVertex>> {
+    fn lod_model(&self, lod: usize) -> Option<SubModel<'_, TerrainVertex>> {
         // Note: Range doesn't impl Copy even for trivially Cloneable things
         self.model
             .opaque
@@ -586,7 +586,7 @@ struct FigureUpdateData<'a, CSS, COR> {
 }
 
 impl FigureReadData<'_> {
-    pub fn get_entity(&self, entity: EcsEntity) -> Option<FigureUpdateParams> {
+    pub fn get_entity(&self, entity: EcsEntity) -> Option<FigureUpdateParams<'_>> {
         Some(FigureUpdateParams {
             entity,
             pos: self.positions.get(entity)?,
@@ -916,10 +916,7 @@ impl FigureMgr {
                     let pos = anim::vek::Vec3::from(
                         interpolated.map(|i| i.pos).unwrap_or(pos.0).into_array(),
                     );
-                    Some(
-                        state.mount_world_pos + anim::vek::Vec3::from(lantern_offset?.into_array())
-                            - pos,
-                    )
+                    Some(state.wpos_of(lantern_offset?) - pos)
                 })
             {
                 light_anim.offset = lantern_offset;
@@ -1136,15 +1133,14 @@ impl FigureMgr {
             // interpolate motion
             const MIN_PERFECT_RATE_DIST: f32 = 100.0;
 
-            if (i as u64 + data.tick)
-                % ((((pos.distance_squared(focus_pos) / entity_data.scale.map_or(1.0, |s| s.0))
+            if !(i as u64 + data.tick).is_multiple_of(
+                ((((pos.distance_squared(focus_pos) / entity_data.scale.map_or(1.0, |s| s.0))
                     .powf(0.25)
                     - MIN_PERFECT_RATE_DIST.sqrt())
                 .max(0.0)
                     / 3.0) as u64)
-                    .saturating_add(1)
-                != 0
-            {
+                    .saturating_add(1),
+            ) {
                 continue;
             }
 
@@ -7041,7 +7037,7 @@ impl FigureMgr {
         mut_count: usize,
         filter_state: impl Fn(&FigureStateMeta) -> bool,
         item_key: Option<ItemKey>,
-    ) -> Option<FigureModelRef> {
+    ) -> Option<FigureModelRef<'_>> {
         let body = *body;
 
         let viewpoint_camera_mode = if is_viewpoint {
@@ -8156,6 +8152,14 @@ impl FigureStateMeta {
     pub fn can_occlude_rain(&self) -> bool {
         // Either visible, or explicitly a rain occluder.
         self.visible || self.can_occlude_rain
+    }
+
+    /// Due to a quirk of the way mount animations work, animation offsets do
+    /// not always correspond to world-space offsets when mounted. This
+    /// function allows calculating the world-space.
+    pub fn wpos_of(&self, figure_offs: Vec3<f32>) -> Vec3<f32> {
+        // Calculate the correct offset given a figure offset
+        self.mount_world_pos + anim::vek::Vec3::from(figure_offs.into_array())
     }
 }
 

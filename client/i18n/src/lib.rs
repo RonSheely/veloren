@@ -12,10 +12,10 @@ use unic_langid::LanguageIdentifier;
 
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, io};
+use std::borrow::Cow;
 
 use assets::{
-    AssetExt, AssetHandle, AssetReadGuard, ReloadWatcher, SharedString, source::DirEntry,
+    AssetCache, AssetExt, AssetHandle, AssetReadGuard, BoxedError, ReloadWatcher, SharedString,
 };
 use common_assets as assets;
 use common_i18n::{Content, LocalizationArg};
@@ -151,8 +151,8 @@ impl Language {
         Some(msg)
     }
 }
-impl assets::Compound for Language {
-    fn load(cache: assets::AnyCache, path: &SharedString) -> Result<Self, assets::BoxedError> {
+impl assets::Asset for Language {
+    fn load(cache: &AssetCache, path: &SharedString) -> Result<Self, BoxedError> {
         let manifest = cache
             .load::<raw::Manifest>(&[path, ".", "_manifest"].concat())?
             .cloned();
@@ -185,6 +185,34 @@ impl assets::Compound for Language {
                 },
             }
         }
+
+        bundle
+            .add_function("HEAD", |positional, _named| match positional.first() {
+                Some(FluentValue::String(s)) => FluentValue::String(
+                    s.trim_start()
+                        .split_once(char::is_whitespace)
+                        .map(|(h, _)| h)
+                        .unwrap_or(s)
+                        .to_string()
+                        .into(),
+                ),
+                _ => FluentValue::Error,
+            })
+            .expect("Failed to add the HEAD function.");
+
+        bundle
+            .add_function("TAIL", |positional, _named| match positional.first() {
+                Some(FluentValue::String(s)) => FluentValue::String(
+                    s.trim_start()
+                        .split_once(char::is_whitespace)
+                        .map(|(_, t)| t.trim_start())
+                        .unwrap_or(s)
+                        .to_string()
+                        .into(),
+                ),
+                _ => FluentValue::Error,
+            })
+            .expect("Failed to add the TAIL function.");
 
         // NOTE:
         // Basically a hack, but conrod can't use isolation marks yet.
@@ -233,7 +261,7 @@ pub struct LocalizationGuard {
 
 impl LocalizationGuard {
     /// Get a localized text from the given key in the fallback language.
-    pub fn try_fallback_msg(&self, key: &str) -> Option<Cow<str>> {
+    pub fn try_fallback_msg(&self, key: &str) -> Option<Cow<'_, str>> {
         self.fallback.as_ref().and_then(|fb| fb.try_msg(key, None))
     }
 
@@ -241,7 +269,7 @@ impl LocalizationGuard {
     ///
     /// First lookup is done in the active language, second in
     /// the fallback (if present).
-    pub fn try_msg(&self, key: &str) -> Option<Cow<str>> {
+    pub fn try_msg(&self, key: &str) -> Option<Cow<'_, str>> {
         self.active
             .try_msg(key, None)
             .or_else(|| self.try_fallback_msg(key))
@@ -253,7 +281,7 @@ impl LocalizationGuard {
     /// the fallback (if present).
     /// If the key is not present in the localization object
     /// then the key itself is returned.
-    pub fn get_msg(&self, key: &str) -> Cow<str> {
+    pub fn get_msg(&self, key: &str) -> Cow<'_, str> {
         // NOTE: we clone the key if translation was missing
         // We could use borrowed version, but it would mean that
         // `key`, `self`, and result should have the same lifetime.
@@ -300,7 +328,7 @@ impl LocalizationGuard {
     /// First lookup is done in the active language, second in
     /// the fallback (if present).
     // Read more in the issue on get_variation at Gitlab
-    pub fn try_variation(&self, key: &str, seed: u16) -> Option<Cow<str>> {
+    pub fn try_variation(&self, key: &str, seed: u16) -> Option<Cow<'_, str>> {
         self.active.try_variation(key, seed, None).or_else(|| {
             self.fallback
                 .as_ref()
@@ -317,7 +345,7 @@ impl LocalizationGuard {
     /// If the key is not present in the localization object
     /// then the key itself is returned.
     // Read more in the issue on get_variation at Gitlab
-    pub fn get_variation(&self, key: &str, seed: u16) -> Cow<str> {
+    pub fn get_variation(&self, key: &str, seed: u16) -> Cow<'_, str> {
         self.try_variation(key, seed)
             .unwrap_or_else(|| Cow::Owned(key.to_owned()))
     }
@@ -477,7 +505,7 @@ impl LocalizationGuard {
     ///
     /// First lookup is done in the active language, second in
     /// the fallback (if present).
-    pub fn try_attr(&self, key: &str, attr: &str) -> Option<Cow<str>> {
+    pub fn try_attr(&self, key: &str, attr: &str) -> Option<Cow<'_, str>> {
         self.active.try_attr(key, attr, None).or_else(|| {
             self.fallback
                 .as_ref()
@@ -491,7 +519,7 @@ impl LocalizationGuard {
     /// the fallback (if present).
     /// If the key is not present in the localization object
     /// then the key itself is returned.
-    pub fn get_attr(&self, key: &str, attr: &str) -> Cow<str> {
+    pub fn get_attr(&self, key: &str, attr: &str) -> Cow<'_, str> {
         self.try_attr(key, attr)
             .unwrap_or_else(|| Cow::Owned(format!("{key}.{attr}")))
     }
@@ -581,39 +609,13 @@ impl LocalizationHandle {
     pub fn reloaded(&mut self) -> bool { self.watcher.reloaded() }
 }
 
-struct FindManifests;
-
-impl assets::DirLoadable for FindManifests {
-    fn select_ids(
-        cache: assets::AnyCache,
-        specifier: &SharedString,
-    ) -> io::Result<Vec<SharedString>> {
-        use assets::Source;
-
-        let mut specifiers = Vec::new();
-
-        let source = cache.raw_source();
-        source.read_dir(specifier, &mut |entry| {
-            if let DirEntry::Directory(spec) = entry {
-                let manifest_spec = [spec, ".", "_manifest"].concat();
-
-                if source.exists(DirEntry::File(&manifest_spec, "ron")) {
-                    specifiers.push(manifest_spec.into());
-                }
-            }
-        })?;
-
-        Ok(specifiers)
-    }
-}
-
 #[derive(Clone, Debug)]
 struct LocalizationList(Vec<LanguageMetadata>);
 
-impl assets::Compound for LocalizationList {
-    fn load(cache: assets::AnyCache, specifier: &SharedString) -> Result<Self, assets::BoxedError> {
+impl assets::Asset for LocalizationList {
+    fn load(cache: &AssetCache, specifier: &SharedString) -> Result<Self, BoxedError> {
         // List language directories
-        let languages = assets::load_rec_dir::<FindManifests>(specifier)
+        let languages = assets::load_rec_dir::<raw::Manifest>(specifier)
             .unwrap_or_else(|e| panic!("Failed to get manifests from {}: {:?}", specifier, e))
             .read()
             .ids()
@@ -659,9 +661,8 @@ mod tests {
     #[test]
     fn test_strict_all_localizations() {
         use analysis::{Language, ReferenceLanguage};
-        use assets::find_root;
 
-        let root = find_root().unwrap();
+        let root = assets::find_root().unwrap();
         let i18n_directory = root.join("assets/voxygen/i18n");
         let reference = ReferenceLanguage::at(&i18n_directory.join(REFERENCE_LANG));
 

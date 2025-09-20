@@ -14,13 +14,13 @@ use common::{
     comp,
     comp::group::Role,
     grid::Grid,
+    map::{MarkerFlags, MarkerKind},
     slowjob::SlowJobPool,
     terrain::{
         Block, BlockKind, CoordinateConversions, TerrainChunk, TerrainChunkSize, TerrainGrid,
     },
     vol::{ReadVol, RectVolSize},
 };
-use common_net::msg::world_msg::{Marker, MarkerKind};
 use common_state::TerrainChanges;
 use conrod_core::{
     Color, Colorable, Positionable, Sizeable, Widget, WidgetCommon, color, position,
@@ -167,8 +167,7 @@ impl VoxelMinimap {
                 && delta.y < VOXEL_MINIMAP_SIDELENGTH / TerrainChunkSize::RECT_SIZE.y
                 && (!self.chunk_minimaps.contains_key(&key)
                     || self.chunks_to_replace.contains(&key))
-            {
-                if let Some((_, column)) = self.keyed_jobs.spawn(Some(pool), key, || {
+                && let Some((_, column)) = self.keyed_jobs.spawn(Some(pool), key, || {
                     let arc_chunk = Arc::clone(chunk);
                     move |_| {
                         let mut layers = Vec::new();
@@ -201,11 +200,11 @@ impl VoxelMinimap {
                             ),
                         }
                     }
-                }) {
-                    self.chunks_to_replace.remove(&key);
-                    self.chunk_minimaps.insert(key, column);
-                    new_chunks = true;
-                }
+                })
+            {
+                self.chunks_to_replace.remove(&key);
+                self.chunk_minimaps.insert(key, column);
+                new_chunks = true;
             }
         }
         new_chunks
@@ -384,6 +383,7 @@ widget_ids! {
         mmap_frame_2,
         mmap_frame_bg,
         mmap_location,
+        mmap_coordinates,
         mmap_button,
         mmap_plus,
         mmap_minus,
@@ -410,13 +410,14 @@ pub struct MiniMap<'a> {
     rot_imgs: &'a ImgsRot,
     world_map: &'a (Vec<img_ids::Rotations>, Vec2<u32>),
     fonts: &'a Fonts,
+    pulse: f32,
     #[conrod(common_builder)]
     common: widget::CommonBuilder,
     ori: Vec3<f32>,
     global_state: &'a GlobalState,
     location_markers: &'a MapMarkers,
     voxel_minimap: &'a VoxelMinimap,
-    extra_markers: &'a HashMap<Vec2<i32>, Marker>,
+    extra_markers: &'a [super::map::ExtraMarker],
 }
 
 impl<'a> MiniMap<'a> {
@@ -426,11 +427,12 @@ impl<'a> MiniMap<'a> {
         rot_imgs: &'a ImgsRot,
         world_map: &'a (Vec<img_ids::Rotations>, Vec2<u32>),
         fonts: &'a Fonts,
+        pulse: f32,
         ori: Vec3<f32>,
         global_state: &'a GlobalState,
         location_markers: &'a MapMarkers,
         voxel_minimap: &'a VoxelMinimap,
-        extra_markers: &'a HashMap<Vec2<i32>, Marker>,
+        extra_markers: &'a [super::map::ExtraMarker],
     ) -> Self {
         Self {
             client,
@@ -438,6 +440,7 @@ impl<'a> MiniMap<'a> {
             rot_imgs,
             world_map,
             fonts,
+            pulse,
             common: widget::CommonBuilder::default(),
             ori,
             global_state,
@@ -474,8 +477,16 @@ impl Widget for MiniMap<'_> {
         let mut events = Vec::new();
 
         let widget::UpdateArgs { state, ui, .. } = args;
+        let colored_player_marker = self
+            .global_state
+            .settings
+            .interface
+            .minimap_colored_player_marker;
         let mut zoom = self.global_state.settings.interface.minimap_zoom;
-        const SCALE: f64 = 1.5; // TODO Make this a setting
+        let mut scale = self.global_state.settings.interface.minimap_scale;
+        if scale <= 0.0 {
+            scale = 1.5;
+        }
         let show_minimap = self.global_state.settings.interface.minimap_show;
         let is_facing_north = self.global_state.settings.interface.minimap_face_north;
         let show_topo_map = self.global_state.settings.interface.map_show_topo_map;
@@ -485,20 +496,21 @@ impl Widget for MiniMap<'_> {
         } else {
             self.ori
         };
+        let map_size = Vec2::new(170.0 * scale, 170.0 * scale);
 
         if show_minimap {
             Image::new(self.imgs.mmap_frame)
-                .w_h(174.0 * SCALE, 190.0 * SCALE)
+                .w_h(174.0 * scale, 190.0 * scale)
                 .top_right_with_margins_on(ui.window, 5.0, 5.0)
                 .color(Some(UI_MAIN))
                 .set(state.ids.mmap_frame, ui);
             Image::new(self.imgs.mmap_frame_2)
-                .w_h(174.0 * SCALE, 190.0 * SCALE)
+                .w_h(174.0 * scale, 190.0 * scale)
                 .middle_of(state.ids.mmap_frame)
                 .color(Some(UI_HIGHLIGHT_0))
                 .set(state.ids.mmap_frame_2, ui);
-            Rectangle::fill_with([170.0 * SCALE, 170.0 * SCALE], color::TRANSPARENT)
-                .mid_top_with_margin_on(state.ids.mmap_frame_2, 18.0 * SCALE)
+            Rectangle::fill_with([170.0 * scale, 170.0 * scale], color::TRANSPARENT)
+                .mid_top_with_margin_on(state.ids.mmap_frame_2, 18.0 * scale)
                 .set(state.ids.mmap_frame_bg, ui);
 
             // Map size in chunk coords
@@ -539,7 +551,7 @@ impl Widget for MiniMap<'_> {
             let can_zoom_out = zoom > min_zoom;
 
             if Button::image(self.imgs.mmap_minus)
-                .w_h(16.0 * SCALE, 18.0 * SCALE)
+                .w_h(16.0 * scale, 18.0 * scale)
                 .hover_image(self.imgs.mmap_minus_hover)
                 .press_image(self.imgs.mmap_minus_press)
                 .top_left_with_margins_on(state.ids.mmap_frame, 0.0, 0.0)
@@ -556,7 +568,7 @@ impl Widget for MiniMap<'_> {
             }
 
             if Button::image(self.imgs.mmap_plus)
-                .w_h(18.0 * SCALE, 18.0 * SCALE)
+                .w_h(18.0 * scale, 18.0 * scale)
                 .hover_image(self.imgs.mmap_plus_hover)
                 .press_image(self.imgs.mmap_plus_press)
                 .right_from(state.ids.mmap_minus, 0.0)
@@ -577,7 +589,7 @@ impl Widget for MiniMap<'_> {
             } else {
                 self.imgs.mmap_north
             })
-            .w_h(18.0 * SCALE, 18.0 * SCALE)
+            .w_h(18.0 * scale, 18.0 * scale)
             .hover_image(if is_facing_north {
                 self.imgs.mmap_north_press_hover
             } else {
@@ -618,8 +630,6 @@ impl Widget for MiniMap<'_> {
                 ],
                 [w_src, h_src],
             );
-
-            let map_size = Vec2::new(170.0 * SCALE, 170.0 * SCALE);
 
             // Map Image
             // Map Layer Images
@@ -677,7 +687,7 @@ impl Widget for MiniMap<'_> {
             let markers = self
                 .client
                 .markers()
-                .chain(self.extra_markers.values())
+                .chain(self.extra_markers.iter().map(|em| &em.marker))
                 .collect::<Vec<_>>();
 
             // Map icons
@@ -726,20 +736,15 @@ impl Widget for MiniMap<'_> {
             };
 
             for (i, marker) in markers.iter().enumerate() {
-                let rpos = match wpos_to_rpos(marker.wpos.map(|e| e as f32), false) {
-                    Some(rpos) => rpos,
-                    None => continue,
-                };
+                let rpos =
+                    match wpos_to_rpos(marker.wpos, marker.flags.contains(MarkerFlags::IS_QUEST)) {
+                        Some(rpos) => rpos,
+                        None => continue,
+                    };
                 let difficulty = match &marker.kind {
-                    MarkerKind::Unknown => None,
-                    MarkerKind::Town => None,
                     MarkerKind::ChapelSite => Some(4),
                     MarkerKind::Terracotta => Some(5),
-                    MarkerKind::Castle => None,
-                    MarkerKind::Cave => None,
-                    MarkerKind::Tree => None,
                     MarkerKind::Gnarling => Some(0),
-                    MarkerKind::Bridge | MarkerKind::GliderCourse => None,
                     MarkerKind::Adlet => Some(1),
                     MarkerKind::Sahagin => Some(2),
                     MarkerKind::Haniwa => Some(3),
@@ -747,6 +752,7 @@ impl Widget for MiniMap<'_> {
                     MarkerKind::Myrmidon => Some(4),
                     MarkerKind::DwarvenMine => Some(5),
                     MarkerKind::VampireCastle => Some(2),
+                    _ => None,
                 };
 
                 Image::new(match &marker.kind {
@@ -767,6 +773,7 @@ impl Widget for MiniMap<'_> {
                     MarkerKind::Myrmidon => self.imgs.mmap_site_myrmidon_bg,
                     MarkerKind::DwarvenMine => self.imgs.mmap_site_mine_bg,
                     MarkerKind::VampireCastle => self.imgs.mmap_site_vampire_castle_bg,
+                    MarkerKind::Character => self.imgs.mmap_character,
                 })
                 .x_y_position_relative_to(
                     state.ids.map_layers[0],
@@ -802,10 +809,13 @@ impl Widget for MiniMap<'_> {
                     MarkerKind::Myrmidon => self.imgs.mmap_site_myrmidon,
                     MarkerKind::DwarvenMine => self.imgs.mmap_site_mine,
                     MarkerKind::VampireCastle => self.imgs.mmap_site_vampire_castle,
+                    MarkerKind::Character => self.imgs.mmap_character,
                 })
                 .middle_of(state.ids.mmap_site_icons_bgs[i])
                 .w_h(20.0, 20.0)
-                .color(Some(UI_HIGHLIGHT_0))
+                .color(Some(
+                    super::map::marker_color(marker, self.pulse).unwrap_or(UI_HIGHLIGHT_0),
+                ))
                 .set(state.ids.mmap_site_icons[i], ui);
             }
 
@@ -913,9 +923,15 @@ impl Widget for MiniMap<'_> {
             // Indicator
             let ind_scale = 0.4;
             let ind_rotation = if is_facing_north {
-                self.rot_imgs.indicator_mmap_small.target_north
+                if colored_player_marker {
+                    self.rot_imgs.indicator_mmap_colored.target_north
+                } else {
+                    self.rot_imgs.indicator_mmap.target_north
+                }
+            } else if colored_player_marker {
+                self.rot_imgs.indicator_mmap_colored.none
             } else {
-                self.rot_imgs.indicator_mmap_small.none
+                self.rot_imgs.indicator_mmap.none
             };
             Image::new(ind_rotation)
                 .middle_of(state.ids.map_layers[0])
@@ -954,7 +970,7 @@ impl Widget for MiniMap<'_> {
             }
         } else {
             Image::new(self.imgs.mmap_frame_closed)
-                .w_h(174.0 * SCALE, 18.0 * SCALE)
+                .w_h(174.0 * scale, 18.0 * scale)
                 .color(Some(UI_MAIN))
                 .top_right_with_margins_on(ui.window, 0.0, 5.0)
                 .set(state.ids.mmap_frame, ui);
@@ -965,7 +981,7 @@ impl Widget for MiniMap<'_> {
         } else {
             self.imgs.mmap_closed
         })
-        .w_h(18.0 * SCALE, 18.0 * SCALE)
+        .w_h(18.0 * scale, 18.0 * scale)
         .hover_image(if show_minimap {
             self.imgs.mmap_open_hover
         } else {
@@ -993,15 +1009,20 @@ impl Widget for MiniMap<'_> {
                 // Count characters in the name to avoid clipping with the name display
                 if let Some(name) = chunk.meta().name() {
                     let name_len = name.chars().count();
+                    let pos = map_size / 2.0 + 3.0;
                     Text::new(name)
-                        .mid_top_with_margin_on(state.ids.mmap_frame, match name_len {
-                            15..=30 => 4.0,
-                            _ => 2.0,
-                        })
+                        .align_middle_x_of(state.ids.mmap_frame)
+                        .y_position_relative_to(
+                            state.ids.mmap_frame,
+                            position::Relative::Scalar(pos.y),
+                        )
                         .font_size(self.fonts.cyri.scale(match name_len {
-                            0..=15 => 18,
-                            16..=30 => 14,
-                            _ => 14,
+                            0..=5 => 12 + (4.0 * scale).round() as u32,
+                            6..=10 => 10 + (4.0 * scale).round() as u32,
+                            11..=15 => 8 + (4.0 * scale).round() as u32,
+                            16..=20 => 6 + (4.0 * scale).round() as u32,
+                            21..=25 => 4 + (4.0 * scale).round() as u32,
+                            _ => 2 + (4.0 * scale).round() as u32,
                         }))
                         .font_id(self.fonts.cyri.conrod_id)
                         .color(TEXT_COLOR)

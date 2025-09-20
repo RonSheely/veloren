@@ -6,7 +6,8 @@ rotation_image_ids! {
         <VoxelGraphic>
 
         <ImageGraphic>
-        indicator_mmap_small: "voxygen.element.ui.minimap.icons.indicator_mmap",
+        indicator_mmap: "voxygen.element.ui.minimap.icons.indicator_mmap",
+        indicator_mmap_colored: "voxygen.element.ui.minimap.icons.indicator_mmap_colored",
          // Tooltip Test
          tt_side: "voxygen.element.ui.generic.frames.tt_test_edge",
          tt_corner: "voxygen.element.ui.generic.frames.tt_test_corner_tr",
@@ -97,10 +98,6 @@ image_ids! {
         quest_bg: "voxygen.element.ui.quests.quest_bg",
         quest_frame: "voxygen.element.ui.quests.quest_frame",
         quest_ico: "voxygen.element.ui.quests.quest_icon",
-
-        // Dialog Window
-        dialogue_bg: "voxygen.element.ui.dialogue.bg",
-        dialogue_frame: "voxygen.element.ui.dialogue.frame",
 
         // Social Window
         social_frame_on: "voxygen.element.ui.social.social_frame",
@@ -503,6 +500,7 @@ image_ids! {
         map_frame: "voxygen.element.ui.map.map_frame",
         map_frame_art: "voxygen.element.ui.map.map_frame_art",
         indicator_mmap: "voxygen.element.ui.minimap.icons.indicator_mmap",
+        indicator_mmap_colored: "voxygen.element.ui.minimap.icons.indicator_mmap_colored",
         indicator_map_overlay: "voxygen.element.ui.minimap.icons.indicator_mmap_small",
         indicator_group: "voxygen.element.ui.map.buttons.group_indicator",
         indicator_group_up: "voxygen.element.ui.map.buttons.group_indicator_arrow_up",
@@ -544,6 +542,8 @@ image_ids! {
         mmap_unknown: "voxygen.element.ui.map.buttons.unknown",
         mmap_unknown_hover: "voxygen.element.ui.map.buttons.unknown_hover",
         mmap_unknown_bg: "voxygen.element.ui.map.buttons.unknown_bg",
+        mmap_character: "voxygen.element.ui.map.buttons.character",
+        mmap_character_hover: "voxygen.element.ui.map.buttons.character_hover",
         mmap_site_town: "voxygen.element.ui.map.buttons.town",
         mmap_site_town_hover: "voxygen.element.ui.map.buttons.town_hover",
         mmap_site_town_bg: "voxygen.element.ui.map.buttons.town_bg",

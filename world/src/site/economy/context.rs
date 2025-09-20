@@ -138,12 +138,12 @@ impl Environment {
     }
 
     fn csv_tick(&mut self, index: &Index) {
-        if let Some(f) = self.csv_file.as_mut() {
-            if let Some(site) = index.sites.values().find(|s| s.do_economic_simulation()) {
-                Economy::csv_entry(f, site).unwrap_or_else(|_| {
-                    self.csv_file.take();
-                });
-            }
+        if let Some(f) = self.csv_file.as_mut()
+            && let Some(site) = index.sites.values().find(|s| s.do_economic_simulation())
+        {
+            Economy::csv_entry(f, site).unwrap_or_else(|_| {
+                self.csv_file.take();
+            });
         }
     }
 }
@@ -284,9 +284,11 @@ mod tests {
         names: &Option<HashMap<Id<crate::site::Site>, String>>,
     ) {
         for (id, site) in sites.iter() {
-            let name = names.as_ref().map_or(site.name().into(), |map| {
-                map.get(&id).cloned().unwrap_or_else(|| site.name().into())
-            });
+            let name = names
+                .as_ref()
+                .and_then(|map| Some(map.get(&id)?.as_str()))
+                .or(site.name())
+                .unwrap_or("");
             println!("Site id {:?} name {}", id.id(), name);
             if let Some(econ) = site.economy.as_ref() {
                 econ.print_details();
@@ -361,7 +363,7 @@ mod tests {
                         .collect();
                     let neighbors = econ.neighbors.iter().map(|j| j.id.id()).collect();
                     let val = EconomySetup {
-                        name: i.name().into(),
+                        name: i.name().unwrap_or("").into(),
                         position: (i.origin.x, i.origin.y),
                         resources,
                         neighbors,
@@ -381,7 +383,7 @@ mod tests {
                     ron::de::from_reader(ron_file).expect("economy_testinput2.ron parse error");
                 names = Some(HashMap::new());
                 let land = crate::Land::from_sim(&sim);
-                let mut meta = crate::site::SitesGenMeta::new(rng.gen());
+                let mut meta = crate::site::SitesGenMeta::new(rng.random());
                 for i in econ_testinput.iter() {
                     let wpos = Vec2 {
                         x: i.position.0,
@@ -460,7 +462,7 @@ mod tests {
             resources: &[(Good, f32)],
         ) -> Id<crate::site::Site> {
             let wpos = Vec2 { x: 42, y: 42 };
-            let mut meta = crate::site::SitesGenMeta::new(env.rng.gen());
+            let mut meta = crate::site::SitesGenMeta::new(env.rng.random());
             let mut settlement = crate::site::Site::generate_city(
                 &crate::Land::from_sim(&env.sim),
                 crate::IndexRef {

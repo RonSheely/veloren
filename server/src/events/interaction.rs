@@ -7,9 +7,9 @@ use tracing::error;
 use vek::*;
 
 use common::{
-    assets::{self, Concatenate},
+    assets::{AssetCombined, AssetHandle, Ron},
     comp::{
-        self,
+        self, InventoryUpdateEvent,
         agent::{AgentEvent, Sound, SoundKind},
         inventory::slot::EquipSlot,
         item::{MaterialStatManifest, flatten_counted_items},
@@ -37,7 +37,6 @@ use crate::{Server, ServerGeneral, Time, client::Client};
 use crate::pet::tame_pet;
 use hashbrown::{HashMap, HashSet};
 use lazy_static::lazy_static;
-use serde::Deserialize;
 
 use super::{ServerEvent, event_dispatch, mounting::within_mounting_range};
 
@@ -123,10 +122,9 @@ impl ServerEvent for NpcInteractEvent {
             if within_range
                 && let Some(agent) = agents.get_mut(npc_entity)
                 && agent.target.is_none()
+                && let Some(interactor_uid) = uids.get(interactor)
             {
-                if let Some(interactor_uid) = uids.get(interactor) {
-                    agent.inbox.push_back(AgentEvent::Talk(*interactor_uid));
-                }
+                agent.inbox.push_back(AgentEvent::Talk(*interactor_uid));
             }
         }
     }
@@ -141,13 +139,21 @@ impl ServerEvent for DialogueEvent {
         WriteStorage<'a, comp::Inventory>,
         ReadExpect<'a, AbilityMap>,
         ReadExpect<'a, MaterialStatManifest>,
+        WriteStorage<'a, comp::InventoryUpdate>,
     );
 
     fn handle(
         events: impl ExactSizeIterator<Item = Self>,
-        (uids, positions, clients, mut agents, mut inventories, ability_map, msm): Self::SystemData<
-            '_,
-        >,
+        (
+            uids,
+            positions,
+            clients,
+            mut agents,
+            mut inventories,
+            ability_map,
+            msm,
+            mut inventory_updates,
+        ): Self::SystemData<'_>,
     ) {
         for DialogueEvent(sender, target, dialogue) in events {
             let within_range = positions
@@ -159,42 +165,48 @@ impl ServerEvent for DialogueEvent {
 
             if within_range && let Some(sender_uid) = uids.get(sender) {
                 // Perform item transfer, if required
-                match &dialogue.kind {
+                let given_item = match &dialogue.kind {
                     DialogueKind::Start
                     | DialogueKind::End
-                    | DialogueKind::Statement(..)
                     | DialogueKind::Question { .. }
-                    | DialogueKind::Marker { .. } => {},
-                    DialogueKind::Response { response, .. } => {
-                        // If the response requires an item to be given, perform exchange (or exit)
-                        if let Some((item_def, amount)) = &response.given_item {
-                            // Check that the target's inventory has enough space for the item
-                            if let Some(target_inv) = inventories.get(target)
-                                && target_inv.has_space_for(item_def, *amount)
-                                // Check that the sender has enough of the item
-                                && let Some(mut sender_inv) = inventories.get_mut(sender)
-                                && sender_inv.item_count(item_def) >= *amount as u64
-                                // First, remove the item from the sender's inventory
-                                && let Some(items) = sender_inv.remove_item_amount(item_def, *amount, &ability_map, &msm)
-                                && let Some(mut target_inv) = inventories.get_mut(target)
-                            {
-                                for item in items {
-                                    // Push the items to the target's inventory
-                                    if target_inv.push(item).is_err() {
-                                        error!(
-                                            "Failed to insert dialogue given item despite target \
-                                             inventory claiming to have space, dropping remaining \
-                                             items..."
-                                        );
-                                        break;
-                                    }
-                                }
+                    | DialogueKind::Marker { .. }
+                    | DialogueKind::Ack { .. } => None,
+                    DialogueKind::Statement { given_item, .. } => given_item.as_ref(),
+                    DialogueKind::Response { response, .. } => response.given_item.as_ref(),
+                };
+                // If the response requires an item to be given, perform exchange (or exit)
+                if let Some((item_def, amount)) = given_item {
+                    // Check that the target's inventory has enough space for the item
+                    if let Some(target_inv) = inventories.get(target)
+                        && target_inv.has_space_for(item_def, *amount)
+                        // Check that the sender has enough of the item
+                        && let Some(mut sender_inv) = inventories.get_mut(sender)
+                        && sender_inv.item_count(item_def) >= *amount as u64
+                        // First, remove the item from the sender's inventory
+                        && let Some(items) = sender_inv.remove_item_amount(item_def, *amount, &ability_map, &msm)
+                        && let Some(mut target_inv) = inventories.get_mut(target)
+                    {
+                        for item in items {
+                            let item_event = InventoryUpdateEvent::Collected(
+                                item.frontend_item(&ability_map, &msm),
+                            );
+                            // Push the items to the target's inventory
+                            if target_inv.push(item).is_err() {
+                                error!(
+                                    "Failed to insert dialogue given item despite target \
+                                     inventory claiming to have space, dropping remaining items..."
+                                );
+                                break;
                             } else {
-                                // TODO: Respond with error message on failure?
-                                continue;
+                                inventory_updates
+                                    .insert(target, comp::InventoryUpdate::new(item_event))
+                                    .expect("The entity must exist because we have its inventory");
                             }
                         }
-                    },
+                    } else {
+                        // TODO: Respond with error message on failure?
+                        continue;
+                    }
                 }
 
                 let dialogue = dialogue.into_validated_unchecked();
@@ -252,23 +264,9 @@ impl ServerEvent for SetPetStayEvent {
     }
 }
 
-#[derive(Deserialize)]
-struct ResourceExperienceManifest(HashMap<String, u32>);
-
-impl assets::Asset for ResourceExperienceManifest {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
-}
-impl Concatenate for ResourceExperienceManifest {
-    fn concatenate(self, b: Self) -> Self { Self(self.0.concatenate(b.0)) }
-}
-
 lazy_static! {
-    static ref RESOURCE_EXPERIENCE_MANIFEST: assets::AssetHandle<ResourceExperienceManifest> =
-        assets::AssetCombined::load_expect_combined_static(
-            "server.manifests.resource_experience_manifest"
-        );
+    static ref RESOURCE_EXPERIENCE_MANIFEST: AssetHandle<Ron<HashMap<String, u32>>> =
+        Ron::load_expect_combined_static("server.manifests.resource_experience_manifest");
 }
 
 impl ServerEvent for MineBlockEvent {
@@ -303,7 +301,7 @@ impl ServerEvent for MineBlockEvent {
         ): Self::SystemData<'_>,
     ) {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut create_item_drop_emitter = create_item_drop_events.emitter();
         let mut sound_event_emitter = sound_events.emitter();
         let mut outcome_emitter = outcomes.emitter();
@@ -409,7 +407,7 @@ impl ServerEvent for MineBlockEvent {
                             // with a chance
                             if !is_broken {
                                 items.retain(|item| {
-                                    rng.gen_bool(
+                                    rng.random_bool(
                                         0.5 + item
                                             .item_definition_id()
                                             .itemdef_id()
@@ -435,9 +433,9 @@ impl ServerEvent for MineBlockEvent {
                                 pos: comp::Pos(ev.pos.map(|e| e as f32) + Vec3::broadcast(0.5)),
                                 vel: comp::Vel(
                                     Vec2::unit_x()
-                                        .rotated_z(rng.gen::<f32>() * PI * 2.0)
+                                        .rotated_z(rng.random::<f32>() * PI * 2.0)
                                         .mul(4.0)
-                                        .with_z(rng.gen_range(5.0..10.0)),
+                                        .with_z(rng.random_range(5.0..10.0)),
                                 ),
                                 ori: comp::Ori::from(Dir::random_2d(&mut rng)),
                                 item: comp::PickupItem::new(item, *program_time, false),
@@ -545,8 +543,8 @@ impl ServerEvent for CreateSpriteEvent {
                     // Remove sprite after del_timeout and offset if specified
                     if let Some((timeout, del_offset)) = ev.del_timeout {
                         use rand::Rng;
-                        let mut rng = rand::thread_rng();
-                        let offset = rng.gen_range(0.0..del_offset);
+                        let mut rng = rand::rng();
+                        let offset = rng.random_range(0.0..del_offset);
                         let current_time: f64 = time.0;
                         let replace_time = current_time + (timeout + offset) as f64;
                         if old_block != new_block {
@@ -575,15 +573,13 @@ impl ServerEvent for ToggleSpriteLightEvent {
             if let Some(entity_pos) = positions.get(ev.entity)
                 && entity_pos.0.distance_squared(ev.pos.as_()) < MAX_INTERACT_RANGE.powi(2)
                 && block_change.can_set_block(ev.pos)
-            {
-                if let Some(new_block) = terrain
+                && let Some(new_block) = terrain
                     .get(ev.pos)
                     .ok()
                     .and_then(|block| block.with_toggle_light(ev.enable))
-                {
-                    block_change.set(ev.pos, new_block);
-                    // TODO: Emit outcome
-                }
+            {
+                block_change.set(ev.pos, new_block);
+                // TODO: Emit outcome
             }
         }
     }

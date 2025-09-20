@@ -65,7 +65,7 @@ impl TrailMgr {
                     let last_pos = *self.pos_cache.entry(entity).or_insert(*pos);
                     let offset = self.offset;
                     let quad_mesh = self.entity_mesh_or_insert(entity, true);
-                    const THICKNESS: f32 = 0.05;
+                    const THICKNESS: f32 = 0.2;
                     let p1 = pos.0;
                     let p2 = p1 + Vec3::unit_z() * THICKNESS;
                     let p4 = last_pos.0;
@@ -151,10 +151,10 @@ impl TrailMgr {
 
     pub fn render<'a>(&'a self, drawer: &mut TrailDrawer<'_, 'a>, scene_data: &SceneData) {
         span!(_guard, "render", "TrailMgr::render");
-        if scene_data.weapon_trails_enabled {
-            if let Some(dynamic_model) = &self.dynamic_model {
-                drawer.draw(dynamic_model.submodel(0..self.model_len))
-            }
+        if scene_data.weapon_trails_enabled
+            && let Some(dynamic_model) = &self.dynamic_model
+        {
+            drawer.draw(dynamic_model.submodel(0..self.model_len))
         }
     }
 

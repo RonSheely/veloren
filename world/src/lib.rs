@@ -6,7 +6,7 @@
 )]
 #![expect(clippy::branches_sharing_code)] // TODO: evaluate
 #![deny(clippy::clone_on_ref_ptr)]
-#![feature(option_zip, let_chains)]
+#![feature(option_zip)]
 #![cfg_attr(feature = "simd", feature(portable_simd))]
 
 mod all;
@@ -46,13 +46,14 @@ use crate::{
     util::{Grid, Sampler},
 };
 use common::{
-    assets,
+    assets::{self, BoxedError, FileAsset, load_ron},
     calendar::Calendar,
     comp::Content,
     generation::{ChunkSupplement, EntityInfo, SpecialEntity},
     lod,
+    map::{Marker, MarkerKind},
     resources::TimeOfDay,
-    rtsim::ChunkResource,
+    rtsim::TerrainResource,
     spiral::Spiral2d,
     spot::Spot,
     terrain::{
@@ -67,7 +68,7 @@ use enum_map::EnumMap;
 use rand::{Rng, prelude::*};
 use rand_chacha::ChaCha8Rng;
 use serde::Deserialize;
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 use vek::*;
 
 #[cfg(all(feature = "be-dyn-lib", feature = "use-dyn-lib"))]
@@ -111,10 +112,10 @@ pub struct Colors {
     pub layer: layer::Colors,
 }
 
-impl assets::Asset for Colors {
-    type Loader = assets::RonLoader;
-
+impl FileAsset for Colors {
     const EXTENSION: &'static str = "ron";
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Result<Self, BoxedError> { load_ron(&bytes) }
 }
 
 impl World {
@@ -192,25 +193,18 @@ impl World {
                     .values()
                     .filter_map(|site| Some((site.kind.marker()?, site)))
                     .map(|(marker, site)| {
-                        world_msg::Marker {
-                            id: site.site_tmp.map(|i| i.id()),
-                            name: site
-                                .site_tmp
-                                .map(|id| Content::Plain(index.sites[id].name().to_string())),
-                            // TODO: Probably unify these, at some point
-                            kind: marker,
-                            wpos: site.center * TerrainChunkSize::RECT_SIZE.map(|e| e as i32),
-                        }
+                        Marker::at(
+                            (site.center * TerrainChunkSize::RECT_SIZE.map(|e| e as i32)).as_(),
+                        )
+                        .with_kind(marker)
+                        .with_site_id(site.site_tmp.map(|i| i.id()))
+                        .with_label(site.site_tmp.map(|id| {
+                            Content::Plain(index.sites[id].name().unwrap_or("").to_string())
+                        }))
                     })
                     .chain(
-                        layer::cave::surface_entrances(&Land::from_sim(self.sim()), index).map(
-                            |wpos| world_msg::Marker {
-                                id: None,
-                                name: None,
-                                kind: world_msg::MarkerKind::Cave,
-                                wpos,
-                            },
-                        ),
+                        layer::cave::surface_entrances(&Land::from_sim(self.sim()), index)
+                            .map(|wpos| Marker::at(wpos.as_()).with_kind(MarkerKind::Cave)),
                     )
                     .collect(),
                 possible_starting_sites: {
@@ -310,13 +304,14 @@ impl World {
     pub fn sample_columns(
         &self,
     ) -> impl Sampler<
-        Index = (Vec2<i32>, IndexRef, Option<&'_ Calendar>),
-        Sample = Option<ColumnSample>,
+        '_,
+        Index = (Vec2<i32>, IndexRef<'_>, Option<&'_ Calendar>),
+        Sample = Option<ColumnSample<'_>>,
     > + '_ {
         ColumnGen::new(&self.sim)
     }
 
-    pub fn sample_blocks(&self) -> BlockGen { BlockGen::new(ColumnGen::new(&self.sim)) }
+    pub fn sample_blocks(&self) -> BlockGen<'_> { BlockGen::new(ColumnGen::new(&self.sim)) }
 
     /// Find a position that's accessible to a player at the given world
     /// position by searching blocks vertically.
@@ -345,7 +340,7 @@ impl World {
         &self,
         index: IndexRef,
         chunk_pos: Vec2<i32>,
-        rtsim_resources: Option<EnumMap<ChunkResource, f32>>,
+        rtsim_resources: Option<EnumMap<TerrainResource, f32>>,
         // TODO: misleading name
         mut should_continue: impl FnMut() -> bool,
         time: Option<(TimeOfDay, Calendar)>,
@@ -461,7 +456,7 @@ impl World {
         };
 
         // Only use for rng affecting dynamic elements like chests and entities!
-        let mut dynamic_rng = ChaCha8Rng::from_seed(thread_rng().gen());
+        let mut dynamic_rng = ChaCha8Rng::from_seed(rand::rng().random());
 
         // Apply layers (paths, caves, etc.)
         let mut canvas = Canvas {
@@ -525,7 +520,7 @@ impl World {
 
         let gen_entity_pos = |dynamic_rng: &mut ChaCha8Rng| {
             let lpos2d = TerrainChunkSize::RECT_SIZE
-                .map(|sz| dynamic_rng.gen::<u32>().rem_euclid(sz) as i32);
+                .map(|sz| dynamic_rng.random::<u32>().rem_euclid(sz) as i32);
             let mut lpos = Vec3::new(
                 lpos2d.x,
                 lpos2d.y,
@@ -600,7 +595,7 @@ impl World {
 
                         // Throw a dice to determine whether this resource should actually spawn
                         // TODO: Don't throw a dice, try to generate the *exact* correct number
-                        if dynamic_rng.gen_bool(rtsim_resources[res].clamp(0.0, 1.0) as f64) {
+                        if dynamic_rng.random_bool(rtsim_resources[res].clamp(0.0, 1.0) as f64) {
                             block
                         } else {
                             block.into_vacant()

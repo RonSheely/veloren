@@ -8,7 +8,7 @@ pub use modular::{MaterialStatManifest, ModularBase, ModularComponent};
 pub use tool::{AbilityMap, AbilitySet, AbilitySpec, Hands, Tool, ToolKind};
 
 use crate::{
-    assets::{self, AssetExt, BoxedError, Error},
+    assets::{self, Asset, AssetCache, AssetExt, BoxedError, Error, Ron, SharedString},
     comp::inventory::InvSlot,
     effect::Effect,
     lottery::LootSpec,
@@ -553,17 +553,12 @@ pub struct ItemI18n {
     map: HashMap<ItemKey, I18nId>,
 }
 
-impl assets::Asset for ItemI18n {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
-}
-
 impl ItemI18n {
     pub fn new_expect() -> Self {
-        ItemI18n::load_expect("common.item_i18n_manifest")
+        Ron::load_expect("common.item_i18n_manifest")
             .read()
             .clone()
+            .into_inner()
     }
 
     /// Returns (name, description) in Content form.
@@ -907,8 +902,8 @@ impl PartialEq for Item {
     }
 }
 
-impl assets::Compound for ItemDef {
-    fn load(cache: assets::AnyCache, specifier: &assets::SharedString) -> Result<Self, BoxedError> {
+impl Asset for ItemDef {
+    fn load(cache: &AssetCache, specifier: &SharedString) -> Result<Self, BoxedError> {
         if specifier.starts_with("veloren.core.") {
             return Err(format!(
                 "Attempted to load an asset from a specifier reserved for core veloren functions. \
@@ -926,7 +921,7 @@ impl assets::Compound for ItemDef {
             tags,
             slots,
             ability_spec,
-        } = cache.load::<RawItemDef>(specifier)?.cloned();
+        } = cache.load::<Ron<_>>(specifier)?.cloned().into_inner();
 
         // Some commands like /give_item provide the asset specifier separated with \
         // instead of .
@@ -959,12 +954,6 @@ struct RawItemDef {
     #[serde(default)]
     slots: u16,
     ability_spec: Option<AbilitySpec>,
-}
-
-impl assets::Asset for RawItemDef {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
 }
 
 #[derive(Debug)]
@@ -1050,7 +1039,7 @@ impl Item {
     /// asset glob pattern
     pub fn new_from_asset_glob(asset_glob: &str) -> Result<Vec<Self>, Error> {
         let specifier = asset_glob.strip_suffix(".*").unwrap_or(asset_glob);
-        let defs = assets::load_rec_dir::<RawItemDef>(specifier)?;
+        let defs = assets::load_rec_dir::<Ron<RawItemDef>>(specifier)?;
         defs.read()
             .ids()
             .map(|id| Item::new_from_asset(id))
@@ -1302,7 +1291,7 @@ impl Item {
     }
 
     #[deprecated = "since item i18n"]
-    pub fn name(&self) -> Cow<str> {
+    pub fn name(&self) -> Cow<'_, str> {
         match &self.item_base {
             ItemBase::Simple(item_def) => {
                 if self.components.is_empty() {
@@ -1327,13 +1316,13 @@ impl Item {
         }
     }
 
-    pub fn kind(&self) -> Cow<ItemKind> {
+    pub fn kind(&self) -> Cow<'_, ItemKind> {
         match &self.item_base {
             ItemBase::Simple(item_def) => Cow::Borrowed(&item_def.kind),
             ItemBase::Modular(mod_base) => {
                 // TODO: Try to move further upward
-                let msm = MaterialStatManifest::load().read();
-                mod_base.kind(self.components(), &msm, self.stats_durability_multiplier())
+                let msm = &MaterialStatManifest::load().read();
+                mod_base.kind(self.components(), msm, self.stats_durability_multiplier())
             },
         }
     }
@@ -1400,7 +1389,7 @@ impl Item {
         }
     }
 
-    pub fn ability_spec(&self) -> Option<Cow<AbilitySpec>> {
+    pub fn ability_spec(&self) -> Option<Cow<'_, AbilitySpec>> {
         match &self.item_base {
             ItemBase::Simple(item_def) => {
                 item_def.ability_spec.as_ref().map(Cow::Borrowed).or({
@@ -1466,10 +1455,10 @@ impl Item {
     }
 
     pub fn increment_damage(&mut self, ability_map: &AbilityMap, msm: &MaterialStatManifest) {
-        if let Some(durability_lost) = &mut self.durability_lost {
-            if *durability_lost < Self::MAX_DURABILITY {
-                *durability_lost += 1;
-            }
+        if let Some(durability_lost) = &mut self.durability_lost
+            && *durability_lost < Self::MAX_DURABILITY
+        {
+            *durability_lost += 1;
         }
         // Update item state after applying durability because stats have potential to
         // change from different durability
@@ -1754,8 +1743,8 @@ pub trait ItemDesc {
     #[deprecated = "since item i18n"]
     fn description(&self) -> &str;
     #[deprecated = "since item i18n"]
-    fn name(&self) -> Cow<str>;
-    fn kind(&self) -> Cow<ItemKind>;
+    fn name(&self) -> Cow<'_, str>;
+    fn kind(&self) -> Cow<'_, ItemKind>;
     fn amount(&self) -> NonZeroU32;
     fn quality(&self) -> Quality;
     fn num_slots(&self) -> u16;
@@ -1795,12 +1784,12 @@ impl ItemDesc for Item {
         self.description()
     }
 
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         #[expect(deprecated)]
         self.name()
     }
 
-    fn kind(&self) -> Cow<ItemKind> { self.kind() }
+    fn kind(&self) -> Cow<'_, ItemKind> { self.kind() }
 
     fn amount(&self) -> NonZeroU32 { self.amount }
 
@@ -1831,12 +1820,12 @@ impl ItemDesc for FrontendItem {
         self.0.description()
     }
 
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         #[expect(deprecated)]
         self.0.name()
     }
 
-    fn kind(&self) -> Cow<ItemKind> { self.0.kind() }
+    fn kind(&self) -> Cow<'_, ItemKind> { self.0.kind() }
 
     fn amount(&self) -> NonZeroU32 { self.0.amount }
 
@@ -1867,12 +1856,12 @@ impl ItemDesc for ItemDef {
         &self.description
     }
 
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         #[expect(deprecated)]
         Cow::Borrowed(&self.name)
     }
 
-    fn kind(&self) -> Cow<ItemKind> { Cow::Borrowed(&self.kind) }
+    fn kind(&self) -> Cow<'_, ItemKind> { Cow::Borrowed(&self.kind) }
 
     fn amount(&self) -> NonZeroU32 { NonZeroU32::new(1).unwrap() }
 
@@ -1905,12 +1894,12 @@ impl ItemDesc for PickupItem {
         self.item().description()
     }
 
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         #[expect(deprecated)]
         self.item().name()
     }
 
-    fn kind(&self) -> Cow<ItemKind> { self.item().kind() }
+    fn kind(&self) -> Cow<'_, ItemKind> { self.item().kind() }
 
     fn amount(&self) -> NonZeroU32 {
         NonZeroU32::new(self.amount()).expect("Item having amount of 0 is invariant")
@@ -1961,12 +1950,12 @@ impl<T: ItemDesc + ?Sized> ItemDesc for &T {
         (*self).description()
     }
 
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         #[expect(deprecated)]
         (*self).name()
     }
 
-    fn kind(&self) -> Cow<ItemKind> { (*self).kind() }
+    fn kind(&self) -> Cow<'_, ItemKind> { (*self).kind() }
 
     fn amount(&self) -> NonZeroU32 { (*self).amount() }
 
@@ -2000,14 +1989,14 @@ pub fn all_item_defs_expect() -> Vec<String> {
 
 /// Returns all item asset specifiers
 pub fn try_all_item_defs() -> Result<Vec<String>, Error> {
-    let defs = assets::load_rec_dir::<RawItemDef>("common.items")?;
+    let defs = assets::load_rec_dir::<Ron<RawItemDef>>("common.items")?;
     Ok(defs.read().ids().map(|id| id.to_string()).collect())
 }
 
 /// Designed to return all possible items, including modulars.
 /// And some impossible too, like ItemKind::TagExamples.
 pub fn all_items_expect() -> Vec<Item> {
-    let defs = assets::load_rec_dir::<RawItemDef>("common.items")
+    let defs = assets::load_rec_dir::<Ron<RawItemDef>>("common.items")
         .expect("failed to load item asset directory");
 
     // Grab all items from assets

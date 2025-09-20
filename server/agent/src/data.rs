@@ -449,9 +449,10 @@ pub struct ReadData<'a> {
 }
 
 pub enum Path {
-    Full,
+    /// Try to path exactly to the target.
+    AtTarget,
+    /// Try to path to a position close to the target.
     Separate,
-    Partial,
 }
 
 #[derive(Clone, Debug)]

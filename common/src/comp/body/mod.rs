@@ -20,7 +20,7 @@ pub mod ship;
 pub mod theropod;
 
 use crate::{
-    assets::{self, Asset},
+    assets::{BoxedError, FileAsset, load_ron},
     consts::{HUMAN_DENSITY, WATER_DENSITY},
     npc::NpcKind,
 };
@@ -196,11 +196,11 @@ impl<BodyMeta, SpeciesMeta> core::ops::Index<&Body> for AllBodies<BodyMeta, Spec
 impl<
     BodyMeta: Send + Sync + for<'de> serde::Deserialize<'de> + 'static,
     SpeciesMeta: Send + Sync + for<'de> serde::Deserialize<'de> + 'static,
-> Asset for AllBodies<BodyMeta, SpeciesMeta>
+> FileAsset for AllBodies<BodyMeta, SpeciesMeta>
 {
-    type Loader = assets::RonLoader;
-
     const EXTENSION: &'static str = "ron";
+
+    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Result<Self, BoxedError> { load_ron(&bytes) }
 }
 
 /// Semantic gender aka body_type
@@ -1497,7 +1497,7 @@ impl Body {
     }
 
     /// Returns the eye height for this creature.
-    pub fn eye_height(&self, scale: f32) -> f32 { self.height() * 0.9 * scale }
+    pub fn eye_height(&self, scale: f32) -> f32 { self.height() * 0.8 * scale }
 
     pub fn default_light_offset(&self) -> Vec3<f32> {
         // TODO: Make this a manifest
@@ -1837,7 +1837,7 @@ impl Body {
             }
         }
 
-        try_localize(self).unwrap_or_else(|| Content::localized("body-npc-speech-generic"))
+        try_localize(self).unwrap_or_else(|| Content::localized("noun-creature"))
     }
 
     /// Read comment on `Gender` for more

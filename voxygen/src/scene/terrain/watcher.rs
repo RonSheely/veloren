@@ -105,24 +105,24 @@ impl BlocksOfInterest {
         let mut spores = Vec::new();
         let mut train_smokes = Vec::new();
 
-        let mut rng = ChaCha8Rng::from_seed(thread_rng().gen());
+        let mut rng = ChaCha8Rng::from_seed(rand::rng().random());
 
         blocks.for_each(|(pos, block)| {
             match block.kind() {
                 BlockKind::Leaves
-                    if rng.gen_range(0..16) == 0
+                    if rng.random_range(0..16) == 0
                         && chunk
                             .get(pos - Vec3::unit_z())
                             .map_or(true, |b| !b.is_filled()) =>
                 {
                     leaves.push(pos)
                 },
-                BlockKind::WeakRock if rng.gen_range(0..6) == 0 => drip.push(pos),
+                BlockKind::WeakRock if rng.random_range(0..6) == 0 => drip.push(pos),
                 BlockKind::Grass => {
-                    if rng.gen_range(0..16) == 0 {
+                    if rng.random_range(0..16) == 0 {
                         grass.push(pos);
                     }
-                    match rng.gen_range(0..8192) {
+                    match rng.random_range(0..8192) {
                         1 => cricket1.push(pos),
                         2 => cricket2.push(pos),
                         3 => cricket3.push(pos),
@@ -161,27 +161,27 @@ impl BlocksOfInterest {
                         slow_river.push(pos)
                     }
                 },
-                BlockKind::Snow if rng.gen_range(0..16) == 0 => snow.push(pos),
+                BlockKind::Snow if rng.random_range(0..16) == 0 => snow.push(pos),
                 BlockKind::Lava
                     if chunk
                         .get(pos + Vec3::unit_z())
                         .map_or(true, |b| !b.is_filled()) =>
                 {
-                    if rng.gen_range(0..5) == 0 {
+                    if rng.random_range(0..5) == 0 {
                         fires.push(pos + Vec3::unit_z())
                     }
-                    if rng.gen_range(0..16) == 0 {
+                    if rng.random_range(0..16) == 0 {
                         lavapool.push(pos)
                     }
                 },
-                BlockKind::GlowingMushroom if rng.gen_range(0..8) == 0 => spores.push(pos),
-                BlockKind::Snow | BlockKind::Ice if rng.gen_range(0..16) == 0 => snow.push(pos),
+                BlockKind::GlowingMushroom if rng.random_range(0..8) == 0 => spores.push(pos),
+                BlockKind::Snow | BlockKind::Ice if rng.random_range(0..16) == 0 => snow.push(pos),
                 _ => {
                     if let Some(sprite) = block.get_sprite() {
-                        if sprite.category() == sprite::Category::Lamp {
-                            if let Ok(sprite::LightEnabled(enabled)) = block.get_attr() {
-                                interactables.push((pos, Interaction::LightToggle(!enabled)));
-                            }
+                        if sprite.category() == sprite::Category::Lamp
+                            && let Ok(sprite::LightEnabled(enabled)) = block.get_attr()
+                        {
+                            interactables.push((pos, Interaction::LightToggle(!enabled)));
                         }
 
                         if block.is_mountable() {
@@ -209,7 +209,7 @@ impl BlocksOfInterest {
                             SpriteKind::Reed => {
                                 reeds.push(pos);
                                 fireflies.push(pos);
-                                if rng.gen_range(0..12) == 0 {
+                                if rng.random_range(0..12) == 0 {
                                     frogs.push(pos);
                                 }
                             },
@@ -279,8 +279,8 @@ impl BlocksOfInterest {
                     }
                 },
             }
-            // NOTE: we don't care whether it requires mine-tool or not here
-            if block.default_tool().is_some() {
+            // NOTE: we don't care whether it requires mine-tool or not here.
+            if block.is_collectible() {
                 interactables.push((pos, Interaction::Collect));
             }
             if let Some(glow) = block.get_glow() {

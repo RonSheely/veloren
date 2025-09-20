@@ -101,6 +101,7 @@ impl From<&JoinData<'_>> for StateUpdate {
         }
     }
 }
+#[expect(clippy::large_enum_variant)] // TODO: evaluate Boxing some
 #[derive(Clone, Debug, Display, PartialEq, Serialize, Deserialize)]
 pub enum CharacterState {
     Idle(idle::Data),
@@ -241,6 +242,16 @@ impl CharacterState {
             | CharacterState::Transform(_)
             | CharacterState::RegrowHead(_) => false,
         }
+    }
+
+    pub fn is_ranged(&self) -> bool {
+        matches!(
+            self,
+            CharacterState::BasicRanged(_)
+                | CharacterState::Throw(_)
+                | CharacterState::ChargedRanged(_)
+                | CharacterState::RepeaterRanged(_)
+        )
     }
 
     /// If this state can manipulate loadout, interact with sprites etc.
@@ -421,7 +432,6 @@ impl CharacterState {
                 | CharacterState::BasicBeam(_)
                 | CharacterState::Stunned(_)
                 | CharacterState::Wielding(_)
-                | CharacterState::Talk(_)
                 | CharacterState::FinisherMelee(_)
                 | CharacterState::DiveMelee(_)
                 | CharacterState::RiposteMelee(_)

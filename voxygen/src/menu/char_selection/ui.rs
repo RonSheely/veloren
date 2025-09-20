@@ -26,13 +26,14 @@ use common::{
     LoadoutBuilder,
     character::{CharacterId, CharacterItem, MAX_CHARACTERS_PER_PLAYER, MAX_NAME_LENGTH},
     comp::{self, Inventory, Item, humanoid, inventory::slot::EquipSlot},
+    map::Marker,
     resources::Time,
     terrain::TerrainChunkSize,
     vol::RectVolSize,
 };
-use common_net::msg::world_msg::{Marker, SiteId};
+use common_net::msg::world_msg::SiteId;
 use i18n::{Localization, LocalizationHandle};
-use rand::{Rng, thread_rng};
+use rand::{Rng, rng};
 //ImageFrame, Tooltip,
 use crate::settings::Settings;
 //use std::time::Duration;
@@ -1432,7 +1433,7 @@ impl Controls {
                     {
                         let site_name = Text::new(
                             self.possible_starting_sites[start_site_idx.unwrap_or_default()]
-                                .name
+                                .label
                                 .as_ref()
                                 .map(|name| i18n.get_content(name))
                                 .unwrap_or_else(|| "Unknown".to_string()),
@@ -1442,7 +1443,7 @@ impl Controls {
                         let pos_frac = info
                             .wpos
                             .map2(self.world_sz * TerrainChunkSize::RECT_SIZE, |e, sz| {
-                                e as f32 / sz as f32
+                                e / sz as f32
                             });
                         let point = Vec2::new(pos_frac.x, 1.0 - pos_frac.y)
                             .map2(map_sz, |e, sz| e * sz as f32 - 12.0);
@@ -1473,7 +1474,7 @@ impl Controls {
                         vec![map]
                     } else {
                         let selected = start_site_idx.get_or_insert_with(|| {
-                            thread_rng().gen_range(0..self.possible_starting_sites.len())
+                            rng().random_range(0..self.possible_starting_sites.len())
                         });
 
                         let site_slider = starter_slider(
@@ -1771,25 +1772,25 @@ impl Controls {
                 events.push(Event::ShowRules);
             },
             Message::ConfirmDeletion => {
-                if let Mode::Select { info_content, .. } = &mut self.mode {
-                    if let Some(InfoContent::Deletion(idx)) = info_content {
-                        if let Some(id) = characters.get(*idx).and_then(|i| i.character.id) {
-                            events.push(Event::DeleteCharacter(id));
-                            // Deselect if the selected character was deleted
-                            if Some(id) == self.selected {
-                                self.selected = None;
-                                events.push(Event::SelectCharacter(None));
-                            }
+                if let Mode::Select { info_content, .. } = &mut self.mode
+                    && let Some(InfoContent::Deletion(idx)) = info_content
+                {
+                    if let Some(id) = characters.get(*idx).and_then(|i| i.character.id) {
+                        events.push(Event::DeleteCharacter(id));
+                        // Deselect if the selected character was deleted
+                        if Some(id) == self.selected {
+                            self.selected = None;
+                            events.push(Event::SelectCharacter(None));
                         }
-                        *info_content = None;
                     }
+                    *info_content = None;
                 }
             },
             Message::CancelDeletion => {
-                if let Mode::Select { info_content, .. } = &mut self.mode {
-                    if let Some(InfoContent::Deletion(_)) = info_content {
-                        *info_content = None;
-                    }
+                if let Mode::Select { info_content, .. } = &mut self.mode
+                    && let Some(InfoContent::Deletion(_)) = info_content
+                {
+                    *info_content = None;
                 }
             },
             Message::ClearCharacterListError => {
@@ -1835,19 +1836,17 @@ impl Controls {
                 }
             },
             Message::Edit(idx) => {
-                if matches!(&self.mode, Mode::Select { .. }) {
-                    if let Some(character) = characters.get(idx) {
-                        if let comp::Body::Humanoid(body) = character.body {
-                            if let Some(id) = character.character.id {
-                                self.mode = Mode::edit(
-                                    character.character.alias.clone(),
-                                    id,
-                                    body,
-                                    &character.inventory,
-                                );
-                            }
-                        }
-                    }
+                if matches!(&self.mode, Mode::Select { .. })
+                    && let Some(character) = characters.get(idx)
+                    && let comp::Body::Humanoid(body) = character.body
+                    && let Some(id) = character.character.id
+                {
+                    self.mode = Mode::edit(
+                        character.character.alias.clone(),
+                        id,
+                        body,
+                        &character.inventory,
+                    );
                 }
             },
             Message::NewCharacter => {
@@ -1875,7 +1874,7 @@ impl Controls {
                         start_site: self
                             .possible_starting_sites
                             .get(start_site_idx.unwrap_or_default())
-                            .and_then(|info| info.id),
+                            .and_then(|info| info.site),
                     });
                     self.mode = Mode::select(Some(InfoContent::CreatingCharacter));
                 }
@@ -1938,14 +1937,14 @@ impl Controls {
                 if let Mode::CreateOrEdit { body, .. } = &mut self.mode {
                     let body_type = body.body_type;
                     let species = body.species;
-                    let mut rng = rand::thread_rng();
-                    body.hair_style = rng.gen_range(0..species.num_hair_styles(body_type));
-                    body.beard = rng.gen_range(0..species.num_beards(body_type));
-                    body.accessory = rng.gen_range(0..species.num_accessories(body_type));
-                    body.hair_color = rng.gen_range(0..species.num_hair_colors());
-                    body.skin = rng.gen_range(0..species.num_skin_colors());
-                    body.eye_color = rng.gen_range(0..species.num_eye_colors());
-                    body.eyes = rng.gen_range(0..species.num_eyes(body_type));
+                    let mut rng = rand::rng();
+                    body.hair_style = rng.random_range(0..species.num_hair_styles(body_type));
+                    body.beard = rng.random_range(0..species.num_beards(body_type));
+                    body.accessory = rng.random_range(0..species.num_accessories(body_type));
+                    body.hair_color = rng.random_range(0..species.num_hair_colors());
+                    body.skin = rng.random_range(0..species.num_skin_colors());
+                    body.eye_color = rng.random_range(0..species.num_eye_colors());
+                    body.eyes = rng.random_range(0..species.num_eyes(body_type));
                 }
             },
             Message::HardcoreEnabled(checked) => {
@@ -2014,27 +2013,26 @@ impl Controls {
                 }
             },
             Message::PrevStartingSite => {
-                if let Mode::CreateOrEdit { start_site_idx, .. } = &mut self.mode {
-                    if !self.possible_starting_sites.is_empty() {
-                        *start_site_idx = Some(
-                            (start_site_idx.unwrap_or_default()
-                                + self.possible_starting_sites.len()
-                                - 1)
-                                % self.possible_starting_sites.len(),
-                        );
-                    }
+                if let Mode::CreateOrEdit { start_site_idx, .. } = &mut self.mode
+                    && !self.possible_starting_sites.is_empty()
+                {
+                    *start_site_idx = Some(
+                        (start_site_idx.unwrap_or_default() + self.possible_starting_sites.len()
+                            - 1)
+                            % self.possible_starting_sites.len(),
+                    );
                 }
             },
             Message::NextStartingSite => {
-                if let Mode::CreateOrEdit { start_site_idx, .. } = &mut self.mode {
-                    if !self.possible_starting_sites.is_empty() {
-                        *start_site_idx = Some(
-                            (start_site_idx.unwrap_or_default()
-                                + self.possible_starting_sites.len()
-                                + 1)
-                                % self.possible_starting_sites.len(),
-                        );
-                    }
+                if let Mode::CreateOrEdit { start_site_idx, .. } = &mut self.mode
+                    && !self.possible_starting_sites.is_empty()
+                {
+                    *start_site_idx = Some(
+                        (start_site_idx.unwrap_or_default()
+                            + self.possible_starting_sites.len()
+                            + 1)
+                            % self.possible_starting_sites.len(),
+                    );
                 }
             },
         }

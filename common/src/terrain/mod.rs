@@ -335,6 +335,8 @@ impl TerrainGrid {
         Some(cubic(x[0], x[1], x[2], x[3], pos.x.fract() as f32))
     }
 
+    /// Note, this returns `None` both when a chunk doesn't exist and when there
+    /// is no sprite cfg at this position in an existing chunk.
     pub fn sprite_cfg_at(&self, wpos: Vec3<i32>) -> Option<&SpriteCfg> {
         let chunk = self.pos_chunk(wpos)?;
         let sprite_chunk_pos = TerrainGrid::chunk_offs(wpos);
@@ -545,7 +547,7 @@ pub fn quadratic_nearest_point(
     let roots = find_roots_cubic(a_, b_, c_, d_);
     let roots = roots.as_ref();
 
-    let min_root = roots
+    roots
         .iter()
         .copied()
         .map(|root| {
@@ -568,6 +570,5 @@ pub fn quadratic_nearest_point(
             (a, !(0.0..=1.0).contains(&ap), ap)
                 .partial_cmp(&(b, !(0.0..=1.0).contains(&bp), bp))
                 .unwrap()
-        });
-    min_root
+        })
 }

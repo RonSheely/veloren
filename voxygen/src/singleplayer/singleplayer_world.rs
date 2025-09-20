@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Read,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
 };
 
@@ -35,6 +35,8 @@ fn load_map(path: &Path) -> Option<SingleplayerWorld> {
         return None;
     };
 
+    let f = BufReader::new(f);
+
     let Ok(bytes) = f.bytes().collect::<Result<Vec<u8>, _>>() else {
         error!("Failed to read {}", meta_path.to_string_lossy());
         return None;
@@ -52,7 +54,7 @@ fn write_world_meta(world: &SingleplayerWorld) {
 
     match fs::File::create(path.join("meta.ron")) {
         Ok(file) => {
-            if let Err(e) = ron::ser::to_writer_pretty(
+            if let Err(e) = ron::options::Options::default().to_io_writer_pretty(
                 file,
                 &version::Current::from_world(world),
                 ron::ser::PrettyConfig::new(),
@@ -99,10 +101,10 @@ fn migrate_old_singleplayer(from: &Path, to: &Path) {
             .unwrap_or((Some(asset_path(DEFAULT_WORLD_MAP)), None));
 
         let map_path = to.join("map.bin");
-        if let Some(map_file) = map_file {
-            if let Err(err) = fs::copy(map_file, &map_path) {
-                error!("Failed to copy map file to singleplayer world: {err}");
-            }
+        if let Some(map_file) = map_file
+            && let Err(err) = fs::copy(map_file, &map_path)
+        {
+            error!("Failed to copy map file to singleplayer world: {err}");
         }
 
         write_world_meta(&SingleplayerWorld {

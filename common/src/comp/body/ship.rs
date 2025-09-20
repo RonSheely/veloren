@@ -3,7 +3,7 @@ use crate::{
     consts::{AIR_DENSITY, WATER_DENSITY},
     terrain::{Block, BlockKind, SpriteKind},
 };
-use rand::prelude::SliceRandom;
+use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use strum::EnumIter;
@@ -54,7 +54,7 @@ impl From<Body> for super::Body {
 
 impl Body {
     pub fn random() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         Self::random_with(&mut rng)
     }
 
@@ -177,7 +177,7 @@ impl Body {
                 use rand::prelude::*;
                 let sz = Vec3::broadcast(11);
                 Collider::Volume(Arc::new(figuredata::VoxelCollider::from_fn(sz, |_pos| {
-                    if thread_rng().gen_bool(0.25) {
+                    if rand::rng().random_bool(0.25) {
                         Block::new(BlockKind::Rock, Rgb::new(255, 0, 0))
                     } else {
                         Block::air(SpriteKind::Empty)
@@ -234,13 +234,9 @@ pub const AIRSHIP_SCALE: f32 = 11.0;
 /// collider geometry
 pub mod figuredata {
     use crate::{
-        assets::{self, AssetExt, AssetHandle, DotVoxAsset, Ron},
+        assets::{Asset, AssetCache, AssetExt, AssetHandle, BoxedError, DotVox, Ron, SharedString},
         figure::TerrainSegment,
-        terrain::{
-            StructureSprite,
-            block::{Block, BlockKind},
-            structure::load_base_structure,
-        },
+        terrain::{Block, BlockKind, SpriteKind, StructureSprite, structure::load_base_structure},
     };
     use hashbrown::HashMap;
     use lazy_static::lazy_static;
@@ -264,8 +260,12 @@ pub mod figuredata {
         fn to_block(&self, color: Rgb<u8>) -> Block {
             match *self {
                 DeBlock::Block(block) => Block::new(block, color),
-                DeBlock::Air(sprite) => sprite.get_block(Block::air),
-                DeBlock::Water(sprite) => sprite.get_block(Block::water),
+                DeBlock::Air(sprite) => sprite
+                    .apply_to_block(Block::air(SpriteKind::Empty))
+                    .unwrap_or_else(|b| b),
+                DeBlock::Water(sprite) => sprite
+                    .apply_to_block(Block::water(SpriteKind::Empty))
+                    .unwrap_or_else(|b| b),
             }
         }
     }
@@ -320,11 +320,8 @@ pub mod figuredata {
         pub fn volume(&self) -> &TerrainSegment { &self.dyna }
     }
 
-    impl assets::Compound for ShipSpec {
-        fn load(
-            cache: assets::AnyCache,
-            _: &assets::SharedString,
-        ) -> Result<Self, assets::BoxedError> {
+    impl Asset for ShipSpec {
+        fn load(cache: &AssetCache, _: &SharedString) -> Result<Self, BoxedError> {
             let manifest: AssetHandle<Ron<ShipCentralSpec>> =
                 AssetExt::load("common.manifests.ship_manifest")?;
             let mut colliders = HashMap::new();
@@ -336,8 +333,7 @@ pub mod figuredata {
                     // TODO: Currently both client and server load models and manifests from
                     // "common.voxel.". In order to support CSG procedural airships, we probably
                     // need to load them in the server and sync them as an ECS resource.
-                    let vox =
-                        cache.load::<DotVoxAsset>(&["common.voxel.", &bone.central.0].concat())?;
+                    let vox = cache.load::<DotVox>(&["common.voxel.", &bone.central.0].concat())?;
 
                     let base_structure = load_base_structure(&vox.read().0, |col| col);
                     let dyna = base_structure.vol.map_into(|cell| {

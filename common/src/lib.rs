@@ -4,7 +4,6 @@
 #![deny(clippy::clone_on_ref_ptr)]
 #![feature(
     fundamental,
-    let_chains,
     trait_alias,
     type_changing_struct_update,
     macro_metavar_expr
@@ -38,6 +37,7 @@ pub mod interaction;
 pub mod link;
 pub mod lod;
 pub mod lottery;
+pub mod map;
 pub mod mounting;
 pub mod npc;
 pub mod outcome;

@@ -208,49 +208,46 @@ impl StuckAirshipTracker {
         // The position history must be full to determine if the airship is stuck.
         if self.pos_history.len() == StuckAirshipTracker::MAX_POS_HISTORY_SIZE
             && self.backout_route.is_empty()
+            && let Some(last_pos) = self.pos_history.last()
         {
-            if let Some(last_pos) = self.pos_history.last() {
-                // If all the positions in the history are within 10 of the last position,
-                if self
-                    .pos_history
-                    .iter()
-                    .all(|pos| pos.distance_squared(*last_pos) < 10.0)
-                {
-                    // Airship is stuck on some obstacle.
+            // If all the positions in the history are within 10 of the last position,
+            if self
+                .pos_history
+                .iter()
+                .all(|pos| pos.distance_squared(*last_pos) < 10.0)
+            {
+                // Airship is stuck on some obstacle.
 
-                    // The direction to backout is opposite to the direction from the airship
-                    // to where it was going before it got stuck.
-                    if let Some(backout_dir) = (ctx.npc.wpos.xy() - target_pos)
-                        .with_z(0.0)
-                        .try_normalized()
-                    {
-                        let ground = ctx
-                            .world
-                            .sim()
-                            .get_surface_alt_approx(last_pos.xy().map(|e| e as i32));
-                        // The position to backout to is the current position + a distance in the
-                        // backout direction.
-                        let mut backout_pos =
-                            ctx.npc.wpos + backout_dir * StuckAirshipTracker::BACKOUT_DIST;
-                        // Add a z offset to the backout pos if the airship is near the ground.
-                        if (ctx.npc.wpos.z - ground).abs() < StuckAirshipTracker::NEAR_GROUND_HEIGHT
-                        {
-                            backout_pos.z += 50.0;
-                        }
-                        self.backout_route =
-                            vec![backout_pos, backout_pos + Vec3::unit_z() * 200.0];
-                        // The airship is stuck.
-                        #[cfg(debug_assertions)]
-                        debug!(
-                            "Airship {} Stuck! at {} {} {}, backout_dir:{:?}, backout_pos:{:?}",
-                            format!("{:?}", ctx.npc_id),
-                            ctx.npc.wpos.x,
-                            ctx.npc.wpos.y,
-                            ctx.npc.wpos.z,
-                            backout_dir,
-                            backout_pos
-                        );
+                // The direction to backout is opposite to the direction from the airship
+                // to where it was going before it got stuck.
+                if let Some(backout_dir) = (ctx.npc.wpos.xy() - target_pos)
+                    .with_z(0.0)
+                    .try_normalized()
+                {
+                    let ground = ctx
+                        .world
+                        .sim()
+                        .get_surface_alt_approx(last_pos.xy().map(|e| e as i32));
+                    // The position to backout to is the current position + a distance in the
+                    // backout direction.
+                    let mut backout_pos =
+                        ctx.npc.wpos + backout_dir * StuckAirshipTracker::BACKOUT_DIST;
+                    // Add a z offset to the backout pos if the airship is near the ground.
+                    if (ctx.npc.wpos.z - ground).abs() < StuckAirshipTracker::NEAR_GROUND_HEIGHT {
+                        backout_pos.z += 50.0;
                     }
+                    self.backout_route = vec![backout_pos, backout_pos + Vec3::unit_z() * 200.0];
+                    // The airship is stuck.
+                    #[cfg(debug_assertions)]
+                    debug!(
+                        "Airship {} Stuck! at {} {} {}, backout_dir:{:?}, backout_pos:{:?}",
+                        format!("{:?}", ctx.npc_id),
+                        ctx.npc.wpos.x,
+                        ctx.npc.wpos.y,
+                        ctx.npc.wpos.z,
+                        backout_dir,
+                        backout_pos
+                    );
                 }
             }
         }
@@ -391,10 +388,10 @@ where
     /// Add a value to the average. Maintains the sum without needing to iterate
     /// the values.
     fn add(&mut self, value: T) {
-        if self.values.len() == S {
-            if let Some(old_value) = self.values.pop_front() {
-                self.sum = self.sum - old_value;
-            }
+        if self.values.len() == S
+            && let Some(old_value) = self.values.pop_front()
+        {
+            self.sum = self.sum - old_value;
         }
         self.values.push_back(value);
         self.sum += value;
@@ -832,7 +829,7 @@ fn fly_airship_inner(
                             ctx.controller
                                 .say(None, Content::localized("npc-speech-pilot-continue_hold"));
                         }
-                        airship_context.hold_timer = ctx.rng.gen_range(10.0..20.0);
+                        airship_context.hold_timer = ctx.rng.random_range(10.0..20.0);
                     }
                     // Hold position (same idea as holding station at the dock except allow
                     // oscillations)
@@ -1109,7 +1106,7 @@ pub fn pilot_airship<S: State>() -> impl Action<S> {
                         );
                 })
                 .repeat()
-                .stop_if(timeout(ctx.rng.gen_range(12.5..16.0) * (current_approach.height as f64 / Airships::CRUISE_HEIGHTS[0] as f64) * 1.3)))
+                .stop_if(timeout(ctx.rng.random_range(12.5..16.0) * (current_approach.height as f64 / Airships::CRUISE_HEIGHTS[0] as f64) * 1.3)))
             .then(
                 just(|ctx: &mut NpcCtx, _| {
                     log_airship_position(ctx, &AirshipFlightPhase::Transition);
@@ -1127,7 +1124,7 @@ pub fn pilot_airship<S: State>() -> impl Action<S> {
                         );
                 })
                 .repeat()
-                .stop_if(timeout(ctx.rng.gen_range(6.5..8.0))))
+                .stop_if(timeout(ctx.rng.random_range(6.5..8.0))))
             // Announce arrival
             .then(just(|ctx: &mut NpcCtx, _| {
                 log_airship_position(ctx, &AirshipFlightPhase::Docked);
@@ -1157,8 +1154,8 @@ pub fn pilot_airship<S: State>() -> impl Action<S> {
                     #[cfg(debug_assertions)]
                     {
                         if route_context.did_hold || docking_time > Airships::docking_duration() {
-                            let docked_site_name = ctx.index.sites.get(current_approach.site_id).name().to_string();
-                            debug!("{}, Docked at {}, did_hold:{}, extra_hold_dock_time:{}, docking_time:{}", format!("{:?}", ctx.npc_id), docked_site_name, route_context.did_hold, route_context.extra_hold_dock_time, docking_time);
+                            let docked_site_name = ctx.index.sites.get(current_approach.site_id).name();
+                            debug!("{:?}, Docked at {:?}, did_hold:{}, extra_hold_dock_time:{}, docking_time:{}", ctx.npc_id, docked_site_name, route_context.did_hold, route_context.extra_hold_dock_time, docking_time);
                         }
                     }
                     route_context.did_hold = false;
@@ -1174,14 +1171,14 @@ pub fn pilot_airship<S: State>() -> impl Action<S> {
                         );
                     })
                     .repeat()
-                    .stop_if(timeout(ctx.rng.gen_range(10.0..16.0)))
+                    .stop_if(timeout(ctx.rng.random_range(10.0..16.0)))
                     // While waiting, every now and then announce where the airship is going next.
                     .then(
                         just(move |ctx, _| {
                             // get the name of the site the airship is going to next.
                             // The route_context.current_approach_index has not been switched yet,
                             // so the index is the opposite of the current approach index.
-                            let next_site_name = ctx.index.sites.get(next_approach.site_id).name().to_string();
+                            let next_site_name = ctx.index.sites.get(next_approach.site_id).name();
                             ctx.controller.say(
                                 None,
                                 Content::localized_with_args("npc-speech-pilot-announce_next", [
@@ -1189,7 +1186,7 @@ pub fn pilot_airship<S: State>() -> impl Action<S> {
                                     "dir",
                                     Direction::from_dir((next_approach.approach_transition_pos - ctx.npc.wpos).xy()).localize_npc(),
                                 ),
-                                ("dst", Content::Plain(next_site_name.to_string())),
+                                ("dst", Content::Plain(next_site_name.unwrap_or("unknown").to_string())),
                                 ]),
                             );
                         })
@@ -1203,8 +1200,8 @@ pub fn pilot_airship<S: State>() -> impl Action<S> {
                     ctx.controller.say(
                     None,
                         Content::localized_with_args("npc-speech-pilot-takeoff", [
-                            ("src", Content::Plain(ctx.index.sites.get(current_approach.site_id).name().to_string())),
-                            ("dst", Content::Plain(ctx.index.sites.get(next_approach.site_id).name().to_string())),
+                            ("src", Content::Plain(ctx.index.sites.get(current_approach.site_id).name().unwrap_or("unknown").to_string())),
+                            ("dst", Content::Plain(ctx.index.sites.get(next_approach.site_id).name().unwrap_or("unknown").to_string())),
                         ]),
                     );
                     // This is when the airship target docking position changes to the next approach.

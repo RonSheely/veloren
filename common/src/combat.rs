@@ -492,7 +492,7 @@ impl Attack {
                             }
                         },
                         CombatEffect::Buff(b) => {
-                            if rng.gen::<f32>() < b.chance {
+                            if rng.random::<f32>() < b.chance {
                                 emitters.emit(BuffEvent {
                                     entity: target.entity,
                                     buff_change: BuffChange::Add(b.to_buff(
@@ -591,7 +591,7 @@ impl Attack {
                             }
                         },
                         CombatEffect::RefreshBuff(chance, b) => {
-                            if rng.gen::<f32>() < *chance {
+                            if rng.random::<f32>() < *chance {
                                 emitters.emit(BuffEvent {
                                     entity: target.entity,
                                     buff_change: BuffChange::Refresh(*b),
@@ -625,18 +625,18 @@ impl Attack {
                             }
                         },
                         CombatEffect::SelfBuff(b) => {
-                            if let Some(attacker) = attacker {
-                                if rng.gen::<f32>() < b.chance {
-                                    emitters.emit(BuffEvent {
-                                        entity: attacker.entity,
-                                        buff_change: BuffChange::Add(b.to_self_buff(
-                                            time,
-                                            attacker,
-                                            applied_damage,
-                                            strength_modifier,
-                                        )),
-                                    });
-                                }
+                            if let Some(attacker) = attacker
+                                && rng.random::<f32>() < b.chance
+                            {
+                                emitters.emit(BuffEvent {
+                                    entity: attacker.entity,
+                                    buff_change: BuffChange::Add(b.to_self_buff(
+                                        time,
+                                        attacker,
+                                        applied_damage,
+                                        strength_modifier,
+                                    )),
+                                });
                             }
                         },
                     }
@@ -745,7 +745,7 @@ impl Attack {
                         }
                     },
                     CombatEffect::Buff(b) => {
-                        if rng.gen::<f32>() < b.chance {
+                        if rng.random::<f32>() < b.chance {
                             emitters.emit(BuffEvent {
                                 entity: target.entity,
                                 buff_change: BuffChange::Add(b.to_buff(
@@ -830,7 +830,7 @@ impl Attack {
                     // Only has an effect when attached to a damage
                     CombatEffect::StageVulnerable(_, _) => {},
                     CombatEffect::RefreshBuff(chance, b) => {
-                        if rng.gen::<f32>() < chance {
+                        if rng.random::<f32>() < chance {
                             emitters.emit(BuffEvent {
                                 entity: target.entity,
                                 buff_change: BuffChange::Refresh(b),
@@ -842,18 +842,18 @@ impl Attack {
                     // Only has an effect when attached to a damage
                     CombatEffect::StunnedVulnerable(_) => {},
                     CombatEffect::SelfBuff(b) => {
-                        if let Some(attacker) = attacker {
-                            if rng.gen::<f32>() < b.chance {
-                                emitters.emit(BuffEvent {
-                                    entity: target.entity,
-                                    buff_change: BuffChange::Add(b.to_self_buff(
-                                        time,
-                                        attacker,
-                                        accumulated_damage,
-                                        strength_modifier,
-                                    )),
-                                });
-                            }
+                        if let Some(attacker) = attacker
+                            && rng.random::<f32>() < b.chance
+                        {
+                            emitters.emit(BuffEvent {
+                                entity: target.entity,
+                                buff_change: BuffChange::Add(b.to_self_buff(
+                                    time,
+                                    attacker,
+                                    accumulated_damage,
+                                    strength_modifier,
+                                )),
+                            });
                         }
                     },
                 }

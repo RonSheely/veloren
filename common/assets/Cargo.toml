@@ -1,16 +1,16 @@
 [package]
-authors = ["juliancoffee <lightdarkdaughter@gmail.com>", "Marcel Märtens <marcel.cochem@googlemail.com>"]
-edition = "2021"
 name = "veloren-common-assets"
-description = "Crate for game loading assets for veloren."
 version = "0.10.0"
+description = "Crate for game loading assets for veloren."
+edition.workspace = true
+authors = ["juliancoffee <lightdarkdaughter@gmail.com>", "Marcel Märtens <marcel.cochem@googlemail.com>"]
 
 [lints]
 workspace = true
 
 [dependencies]
 lazy_static = { workspace = true }
-assets_manager = { version = "0.12", features = ["bincode", "ron", "json"] }
+assets_manager = { version = "0.13", features = ["ab_glyph", "bincode", "ron", "json"] }
 ron = { workspace = true }
 dot_vox = "5.1"
 wavefront = "0.2" # TODO: Use vertex-colors branch when we have models that have them

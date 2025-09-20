@@ -156,7 +156,7 @@ pub fn handle_exit_ingame(server: &mut Server, entity: EcsEntity, skip_persisten
             .hook_rtsim_actor_death(
                 &world,
                 index.as_index_ref(),
-                common::rtsim::Actor::Npc(rtsim_entity.0),
+                common::rtsim::Actor::Npc(rtsim_entity),
                 pos.map(|p| p.0),
                 None,
             );
@@ -444,9 +444,9 @@ pub fn handle_possess(
         let new_presence = {
             let ecs = state.ecs();
             // Check that entities still exist
-            if !possessor.gen().is_alive()
+            if !possessor.r#gen().is_alive()
                 || !ecs.is_alive(possessor)
-                || !possessee.gen().is_alive()
+                || !possessee.r#gen().is_alive()
                 || !ecs.is_alive(possessee)
             {
                 error!(

@@ -274,10 +274,10 @@ fn on_tick(ctx: EventCtx<SimulateNpcs, OnTick>) {
         // Move home if required
         if let Some(new_home) = npc.controller.new_home.take() {
             // Remove the NPC from their old home population
-            if let Some(old_home) = npc.home {
-                if let Some(old_home) = data.sites.get_mut(old_home) {
-                    old_home.population.remove(&npc_id);
-                }
+            if let Some(old_home) = npc.home
+                && let Some(old_home) = data.sites.get_mut(old_home)
+            {
+                old_home.population.remove(&npc_id);
             }
             // Add the NPC to their new home population
             if let Some(new_home) = new_home
@@ -288,9 +288,12 @@ fn on_tick(ctx: EventCtx<SimulateNpcs, OnTick>) {
             npc.home = new_home;
         }
 
-        // Set hired status if required (I'm a poet and I didn't know it)
-        if let Some(hiring) = npc.controller.hiring.take() {
-            npc.hiring = hiring;
+        // Create registered quests
+        for (id, quest) in core::mem::take(&mut npc.controller.quests_to_create) {
+            data.quests.create(id, quest);
         }
+
+        // Set job status
+        npc.job = npc.controller.job.clone();
     }
 }

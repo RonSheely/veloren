@@ -28,6 +28,7 @@ mod airship_ai;
 mod airship_logger;
 pub mod dialogue;
 pub mod movement;
+pub mod quest;
 pub mod util;
 
 use std::{collections::VecDeque, hash::BuildHasherDefault, sync::Arc};
@@ -41,7 +42,8 @@ use crate::{
     },
     data::{
         ReportKind, Sentiment, Sites,
-        npc::{Brain, DialogueSession, PathData, SimulationMode},
+        npc::{Brain, DialogueSession, Job, PathData, SimulationMode},
+        quest::{Quest, QuestKind},
     },
     event::OnTick,
 };
@@ -53,11 +55,12 @@ use common::{
         compass::{Direction, Distance},
         item::ItemDef,
     },
+    map::{Marker, MarkerKind},
     match_some,
     path::Path,
     rtsim::{
-        Actor, ChunkResource, DialogueKind, NpcInput, PersonalityTrait, Profession, Response, Role,
-        SiteId,
+        Actor, DialogueKind, ItemResource, NpcInput, PersonalityTrait, Profession, QuestId,
+        Response, Role, SiteId, TerrainResource,
     },
     spiral::Spiral2d,
     store::Id,
@@ -68,7 +71,7 @@ use common::{
 use core::ops::ControlFlow;
 use fxhash::FxHasher64;
 use itertools::{Either, Itertools};
-use rand::prelude::*;
+use rand::{prelude::*, seq::IndexedRandom};
 use rand_chacha::ChaChaRng;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 use vek::*;
@@ -125,7 +128,7 @@ impl Rule for NpcAi {
                     // Don't run AI for dead NPCs
                     .filter(|(_, npc)| !npc.is_dead() && !matches!(npc.role, Role::Vehicle))
                     // Don't run AI for simulated NPCs every tick
-                    .filter(|(_, npc)| matches!(npc.mode, SimulationMode::Loaded) || (npc.seed as u64 + ctx.event.tick) % SIMULATED_TICK_SKIP == 0)
+                    .filter(|(_, npc)| matches!(npc.mode, SimulationMode::Loaded) || (npc.seed as u64 + ctx.event.tick).is_multiple_of(SIMULATED_TICK_SKIP))
                     .map(|(npc_id, npc)| {
                         let controller = std::mem::take(&mut npc.controller);
                         let inbox = std::mem::take(&mut npc.inbox);
@@ -138,7 +141,7 @@ impl Rule for NpcAi {
                             })),
                         });
                         let npc_dialogue = std::mem::take(&mut npc.npc_dialogue);
-                        (npc_id, controller, inbox, sentiments, known_reports, brain, npc_dialogue)
+                        (npc_id, controller, inbox, sentiments, known_reports, brain, npc_dialogue, ctx.system_data.rtsim_gizmos.tracked.remove(npc_id))
                     })
                     .collect::<Vec<_>>()
             };
@@ -153,11 +156,12 @@ impl Rule for NpcAi {
 
                 npc_data
                     .par_iter_mut()
-                    .for_each(|(npc_id, controller, inbox, sentiments, known_reports, brain, npc_dialogue)| {
+                    .for_each(|(npc_id, controller, inbox, sentiments, known_reports, brain, npc_dialogue, gizmos)| {
                         let npc = &data.npcs[*npc_id];
 
-                        controller.reset();
+                        controller.reset(npc);
 
+                        #[allow(unused)] // TODO: check if correct
                         brain.action.tick(&mut NpcCtx {
                             state: ctx.state,
                             world: ctx.world,
@@ -176,7 +180,8 @@ impl Rule for NpcAi {
                             } else {
                                 simulated_dt
                             },
-                            rng: ChaChaRng::from_seed(thread_rng().gen::<[u8; 32]>()),
+                            rng: ChaChaRng::from_seed(rand::rng().random::<[u8; 32]>()),
+                            gizmos: gizmos.as_mut(),
                             system_data: &*ctx.system_data,
                         }, &mut ());
 
@@ -188,7 +193,7 @@ impl Rule for NpcAi {
             // Reinsert NPC brains
             let mut data = ctx.state.data_mut();
             let mut to_update = Vec::with_capacity(npc_data.len());
-            for (npc_id, controller, inbox, sentiments, known_reports, brain, npc_dialogue) in npc_data {
+            for (npc_id, controller, inbox, sentiments, known_reports, brain, npc_dialogue, gizmos) in npc_data {
                 to_update.push(npc_id);
                 data.npcs[npc_id].controller = controller;
                 data.npcs[npc_id].brain = Some(brain);
@@ -196,6 +201,10 @@ impl Rule for NpcAi {
                 data.npcs[npc_id].sentiments = sentiments;
                 data.npcs[npc_id].known_reports = known_reports;
                 data.npcs[npc_id].npc_dialogue = npc_dialogue;
+
+                if let Some(gizmos) = gizmos {
+                    ctx.system_data.rtsim_gizmos.tracked.insert(npc_id, gizmos);
+                }
             }
 
             for npc_id in to_update {
@@ -255,14 +264,14 @@ fn tell_site_content(ctx: &NpcCtx, site: SiteId) -> Option<Content> {
 
 fn smalltalk_to<S: State>(tgt: Actor) -> impl Action<S> {
     now(move |ctx, _| {
-        if matches!(tgt, Actor::Npc(_)) && ctx.rng.gen_bool(0.2) {
+        if matches!(tgt, Actor::Npc(_)) && ctx.rng.random_bool(0.2) {
             // Cut off the conversation sometimes to avoid infinite conversations (but only
             // if the target is an NPC!) TODO: Don't special case this, have
             // some sort of 'bored of conversation' system
             idle().boxed()
         } else {
             // Mention nearby sites
-            let comment = if ctx.rng.gen_bool(0.3)
+            let comment = if ctx.rng.random_bool(0.3)
                 && let Some(current_site) = ctx.npc.current_site
                 && let Some(current_site) = ctx.state.data().sites.get(current_site)
                 && let Some(mention_site) = current_site.nearby_sites_by_size.choose(&mut ctx.rng)
@@ -270,7 +279,7 @@ fn smalltalk_to<S: State>(tgt: Actor) -> impl Action<S> {
             {
                 content
             // Mention current site
-            } else if ctx.rng.gen_bool(0.3)
+            } else if ctx.rng.random_bool(0.3)
                 && let Some(current_site) = ctx.npc.current_site
                 && let Some(current_site_name) = util::site_name(ctx, current_site)
             {
@@ -280,7 +289,7 @@ fn smalltalk_to<S: State>(tgt: Actor) -> impl Action<S> {
                 )])
 
             // Mention nearby monsters
-            } else if ctx.rng.gen_bool(0.3)
+            } else if ctx.rng.random_bool(0.3)
                 && let Some(monster) = ctx
                     .state
                     .data()
@@ -302,9 +311,9 @@ fn smalltalk_to<S: State>(tgt: Actor) -> impl Action<S> {
                     ),
                 ])
             // Specific night dialog
-            } else if ctx.rng.gen_bool(0.6) && DayPeriod::from(ctx.time_of_day.0).is_dark() {
+            } else if ctx.rng.random_bool(0.6) && DayPeriod::from(ctx.time_of_day.0).is_dark() {
                 Content::localized("npc-speech-night")
-            } else if ctx.rng.gen_bool(0.3)
+            } else if ctx.rng.random_bool(0.3)
                 && let Some(profession_comment) = match_some!(ctx.npc.profession(),
                     Some(Profession::Pirate(_)) => Content::localized("npc-speech-pirate"),
                 )
@@ -336,7 +345,7 @@ fn socialize() -> impl Action<EveryRange> {
             && !ctx.npc.personality.is(PersonalityTrait::Introverted)
         {
             // Sometimes dance
-            if ctx.rng.gen_bool(0.15) {
+            if ctx.rng.random_bool(0.15) {
                 return just(|ctx, _| ctx.controller.do_dance(None))
                     .repeat()
                     .stop_if(timeout(6.0))
@@ -372,7 +381,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
             && let Some(site) = data.sites.get(home)
             && let Some(faction) = ctx.npc.faction
             // Approx. once an hour.
-            && ctx.chance(1.0 / 3600.0)
+            && ctx.chance(1.0 / 1200.0)
             && let Some(site_to_raid) = site
                 .nearby_sites_by_size
                 .iter()
@@ -393,7 +402,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                         !npc.is_dead()
                             && npc.current_site == Some(home)
                             && npc.faction == Some(faction)
-                            && npc.hiring.is_none()
+                            && npc.hired().is_none()
                             && matches!(npc.role, Role::Civilised(Some(Profession::Pirate(false))))
                     })
                 })
@@ -412,7 +421,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                                     !npc.is_dead()
                                         && npc.current_site == Some(home)
                                         && npc.faction == Some(faction)
-                                        && npc.hiring.is_none()
+                                        && npc.hired().is_none()
                                         && matches!(
                                             npc.role,
                                             Role::Civilised(Some(Profession::Pirate(false)))
@@ -445,10 +454,10 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                                                 target,
                                                 Content::localized("npc-response-accept_hire"),
                                             );
-                                            ctx.controller.hiring = Some(Some((
+                                            ctx.controller.set_newly_hired(
                                                 target,
                                                 common::resources::Time(f64::INFINITY),
-                                            )));
+                                            );
                                         },
                                     )),
                                 );
@@ -470,7 +479,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                                 data.npcs.get(**npc_id).is_some_and(|npc| {
                                     !npc.is_dead()
                                         && npc
-                                            .hiring
+                                            .hired()
                                             .is_some_and(|(a, _)| a == Actor::Npc(ctx.npc_id))
                                 })
                             })
@@ -484,7 +493,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                                     !npc.is_dead()
                                         && npc.current_site == Some(home)
                                         && npc.faction == Some(faction)
-                                        && npc.hiring.is_none()
+                                        && npc.hired().is_none()
                                         && matches!(
                                             npc.role,
                                             Role::Civilised(Some(Profession::Pirate(false)))
@@ -512,7 +521,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                 .then(
                     // TODO: Replace this with raiding stuff
                     villager(site_to_raid)
-                        .stop_if(timeout(ctx.rng.gen_range(60.0..120.0)))
+                        .stop_if(timeout(ctx.rng.random_range(60.0..120.0)))
                         .debug(|| "raiding"),
                 )
                 .then(travel_to_site(home, 0.6).debug(|| "traveling home from raid"))
@@ -525,7 +534,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                         for &npc_id in site.population.iter() {
                             if let Some(npc) = data.npcs.get(npc_id)
                                 && npc
-                                    .hiring
+                                    .hired()
                                     .is_some_and(|(actor, _)| actor == Actor::Npc(ctx.npc_id))
                             {
                                 ctx.controller
@@ -536,11 +545,13 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                 }))
                 .map(|_, _| ()),
             )
-        } else if let Some((leader, _)) = ctx.npc.hiring {
+        } else if let Some((leader, _)) = ctx.npc.hired() {
             important(
                 follow_actor(leader, 5.0)
                     .stop_if(move |ctx: &mut NpcCtx| {
-                        ctx.npc.hiring.is_none_or(move |(actor, _)| actor != leader)
+                        ctx.npc
+                            .hired()
+                            .is_none_or(move |(actor, _)| actor != leader)
                     })
                     .map(|_, _| ()),
             )
@@ -571,7 +582,7 @@ fn pirate(is_leader: bool) -> impl Action<DefaultState> {
                     .then(socialize()
                         .repeat()
                         .map_state(|state: &mut DefaultState| &mut state.socialize_timer)
-                        .stop_if(timeout(ctx.rng.gen_range(30.0..90.0)))
+                        .stop_if(timeout(ctx.rng.random_range(30.0..90.0)))
                         .debug(|| "wait at pirate hideout"))
                     .map(|_, _| ())
             }))
@@ -612,7 +623,7 @@ fn adventure() -> impl Action<DefaultState> {
             .iter()
             .filter(|(site_id, site)| {
                 site.world_site.is_some_and(|ws| ctx.index.sites.get(ws).any_plot(|plot| matches!(plot.meta(), Some(PlotKindMeta::Workshop { .. })))) && (ctx.npc.current_site != Some(*site_id))
-                    && ctx.rng.gen_bool(0.25)
+                    && ctx.rng.random_bool(0.25)
             })
             .min_by_key(|(_, site)| site.wpos.as_().distance(ctx.npc.wpos.xy()) as i32)
             .map(|(site_id, _)| site_id)
@@ -641,11 +652,11 @@ fn adventure() -> impl Action<DefaultState> {
 fn hired(tgt: Actor) -> impl Action<DefaultState> {
     follow_actor(tgt, 5.0)
         // Stop following if we're no longer hired
-        .stop_if(move |ctx: &mut NpcCtx| ctx.npc.hiring.is_none_or(|(a, _)| a != tgt))
+        .stop_if(move |ctx: &mut NpcCtx| ctx.npc.hired().is_none_or(|(a, _)| a != tgt))
         .debug(move|| format!("hired by {tgt:?}"))
         .interrupt_with(move |ctx, _| {
             // End hiring for various reasons
-            if let Some((tgt, expires)) = ctx.npc.hiring {
+            if let Some((tgt, expires)) = ctx.npc.hired() {
                 // Hiring period has expired
                 if ctx.time > expires {
                     ctx.controller.end_hiring();
@@ -695,7 +706,7 @@ fn hired(tgt: Actor) -> impl Action<DefaultState> {
                     })
                     .then(
                         go_to_tavern(visiting, pid).stop_if(move |ctx: &mut NpcCtx<'_, '_>| {
-                            ctx.npc.hiring.is_none_or(|(tgt, _)| {
+                            ctx.npc.hired().is_none_or(|(tgt, _)| {
                                 util::locate_actor(ctx, tgt).is_none_or(|pos|
                                     ctx.world.sim()
                                         .get_wpos(pos.xy().as_())
@@ -720,9 +731,9 @@ fn gather_ingredients<S: State>() -> impl Action<S> {
     just(|ctx, _| {
         ctx.controller.do_gather(
             &[
-                ChunkResource::Fruit,
-                ChunkResource::Mushroom,
-                ChunkResource::Plant,
+                TerrainResource::Fruit,
+                TerrainResource::Mushroom,
+                TerrainResource::Plant,
             ][..],
         )
     })
@@ -736,7 +747,7 @@ fn hunt_animals<S: State>() -> impl Action<S> {
 fn find_forest(ctx: &mut NpcCtx) -> Option<Vec2<f32>> {
     let chunk_pos = ctx.npc.wpos.xy().as_().wpos_to_cpos();
     Spiral2d::new()
-        .skip(ctx.rng.gen_range(1..=64))
+        .skip(ctx.rng.random_range(1..=64))
         .take(24)
         .map(|rpos| chunk_pos + rpos)
         .find(|cpos| {
@@ -817,7 +828,7 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                 .then(just(move |ctx, _| ctx.controller.set_new_home(new_home))));
         }
         let day_period = DayPeriod::from(ctx.time_of_day.0);
-        let is_weekend = ctx.time_of_day.day() as u64 % 6 == 0;
+        let is_weekend = (ctx.time_of_day.day() as u64).is_multiple_of(6);
         let is_evening = day_period == DayPeriod::Evening;
 
         let is_free_time = is_weekend || is_evening;
@@ -913,23 +924,23 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
         else if
             // Ain't no rest for the wicked
             !matches!(ctx.npc.profession(), Some(Profession::Guard | Profession::Chef))
-            && (matches!(day_period, DayPeriod::Evening) || is_free_time || ctx.rng.gen_bool(0.05)) {
+            && (matches!(day_period, DayPeriod::Evening) || is_free_time || ctx.rng.random_bool(0.05)) {
             let mut fun_activities = Vec::new();
 
             if let Some(ws_id) = ctx.state.data().sites[visiting_site].world_site {
                 let ws = ctx.index.sites.get(ws_id);
                 if let Some(arena) = ws.plots().find_map(|p| match_some!(p.kind(), PlotKind::DesertCityArena(a) => a)) {
-                    let wait_time = ctx.rng.gen_range(100.0..300.0);
+                    let wait_time = ctx.rng.random_range(100.0..300.0);
                     // We don't use Z coordinates for seats because they are complicated to calculate from the Ramp procedural generation
                     // and using goto_2d seems to work just fine. However it also means that NPC will never go seat on the stands
                     // on the first floor of the arena. This is a compromise that was made because in the current arena procedural generation
                     // there is also no pathways to the stands on the first floor for NPCs.
                     let arena_center = Vec3::new(arena.center.x, arena.center.y, arena.base).as_::<f32>();
                     let stand_dist = arena.stand_dist as f32;
-                    let seat_var_width = ctx.rng.gen_range(0..arena.stand_width) as f32;
-                    let seat_var_length = ctx.rng.gen_range(-arena.stand_length..arena.stand_length) as f32;
+                    let seat_var_width = ctx.rng.random_range(0..arena.stand_width) as f32;
+                    let seat_var_length = ctx.rng.random_range(-arena.stand_length..arena.stand_length) as f32;
                     // Select a seat on one of the 4 arena stands
-                    let seat = match ctx.rng.gen_range(0..4) {
+                    let seat = match ctx.rng.random_range(0..4) {
                         0 => Vec3::new(arena_center.x - stand_dist + seat_var_width, arena_center.y + seat_var_length, arena_center.z),
                         1 => Vec3::new(arena_center.x + stand_dist - seat_var_width, arena_center.y + seat_var_length, arena_center.z),
                         2 => Vec3::new(arena_center.x + seat_var_length, arena_center.y - stand_dist + seat_var_width, arena_center.z),
@@ -940,9 +951,9 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                     let action = casual(just(move |ctx, _| ctx.controller.say(None, Content::localized("npc-speech-arena")))
                             .then(goto_2d(seat.xy(), 0.6, 1.0).debug(|| "go to arena"))
                             // Turn toward the centre of the arena and watch the action!
-                            .then(choose(move |ctx, _| if ctx.rng.gen_bool(0.3) {
+                            .then(choose(move |ctx, _| if ctx.rng.random_bool(0.3) {
                                 casual(just(move |ctx,_| ctx.controller.do_cheer(look_dir)).repeat().stop_if(timeout(5.0)))
-                            } else if ctx.rng.gen_bool(0.15) {
+                            } else if ctx.rng.random_bool(0.15) {
                                 casual(just(move |ctx,_| ctx.controller.do_dance(look_dir)).repeat().stop_if(timeout(5.0)))
                             } else {
                                 casual(just(move |ctx,_| ctx.controller.do_sit(look_dir, None)).repeat().stop_if(timeout(15.0)))
@@ -954,7 +965,7 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                     fun_activities.push(action);
                 }
                 if let Some(tavern) = ws.plots.iter().filter_map(|(pid, p)| match_some!(p.kind(), PlotKind::Tavern(_) => pid)).choose(&mut ctx.rng) {
-                    let wait_time = ctx.rng.gen_range(100.0..300.0);
+                    let wait_time = ctx.rng.random_range(100.0..300.0);
                     let action = go_to_tavern(visiting_site, tavern).stop_if(timeout(wait_time)).map(|_, _| ());
 
                     fun_activities.push(casual(action));
@@ -963,38 +974,38 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
 
 
             if !fun_activities.is_empty() {
-                let i = ctx.rng.gen_range(0..fun_activities.len());
+                let i = ctx.rng.random_range(0..fun_activities.len());
                 return fun_activities.swap_remove(i);
             }
         }
         // Villagers with roles should perform those roles
-        else if matches!(ctx.npc.profession(), Some(Profession::Herbalist)) && ctx.rng.gen_bool(0.8)
+        else if matches!(ctx.npc.profession(), Some(Profession::Herbalist)) && ctx.rng.random_bool(0.8)
         {
             if let Some(forest_wpos) = find_forest(ctx) {
                 return casual(
                     travel_to_point(forest_wpos, 0.5)
                         .debug(|| "walk to forest")
                         .then({
-                            let wait_time = ctx.rng.gen_range(10.0..30.0);
+                            let wait_time = ctx.rng.random_range(10.0..30.0);
                             gather_ingredients().repeat().stop_if(timeout(wait_time))
                         })
                         .map(|_, _| ()),
                 );
             }
-        } else if matches!(ctx.npc.profession(), Some(Profession::Farmer)) && ctx.rng.gen_bool(0.8)
+        } else if matches!(ctx.npc.profession(), Some(Profession::Farmer)) && ctx.rng.random_bool(0.8)
         {
             if let Some(farm_wpos) = find_farm(ctx, visiting_site) {
                 return casual(
                     travel_to_point(farm_wpos, 0.5)
                         .debug(|| "walk to farm")
                         .then({
-                            let wait_time = ctx.rng.gen_range(30.0..120.0);
+                            let wait_time = ctx.rng.random_range(30.0..120.0);
                             gather_ingredients().repeat().stop_if(timeout(wait_time))
                         })
                         .map(|_, _| ()),
                 );
             }
-        } else if matches!(ctx.npc.profession(), Some(Profession::Hunter)) && ctx.rng.gen_bool(0.8) {
+        } else if matches!(ctx.npc.profession(), Some(Profession::Hunter)) && ctx.rng.random_bool(0.8) {
             if let Some(forest_wpos) = find_forest(ctx) {
                 return casual(
                     just(|ctx, _| {
@@ -1004,19 +1015,19 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                     .then(travel_to_point(forest_wpos, 0.75))
                     .debug(|| "walk to forest")
                     .then({
-                        let wait_time = ctx.rng.gen_range(30.0..60.0);
+                        let wait_time = ctx.rng.random_range(30.0..60.0);
                         hunt_animals().repeat().stop_if(timeout(wait_time))
                     })
                     .map(|_, _| ()),
                 );
             }
-        } else if matches!(ctx.npc.profession(), Some(Profession::Guard)) && ctx.rng.gen_bool(0.7) {
+        } else if matches!(ctx.npc.profession(), Some(Profession::Guard)) && ctx.rng.random_bool(0.7) {
             if let Some(plaza_wpos) = choose_plaza(ctx, visiting_site) {
                 return casual(
                     travel_to_point(plaza_wpos, 0.4)
                         .debug(|| "patrol")
                         .interrupt_with(move |ctx, _| {
-                            if ctx.rng.gen_bool(0.0003) {
+                            if ctx.rng.random_bool(0.0003) {
                                 Some(just(move |ctx, _| {
                                     ctx.controller
                                         .say(None, Content::localized("npc-speech-guard_thought"))
@@ -1028,12 +1039,12 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                         .map(|_, _| ()),
                 );
             }
-        } else if matches!(ctx.npc.profession(), Some(Profession::Merchant)) && ctx.rng.gen_bool(0.8)
+        } else if matches!(ctx.npc.profession(), Some(Profession::Merchant)) && ctx.rng.random_bool(0.8)
         {
             return casual(
                 just(|ctx, _| {
                     // Try to direct our speech at nearby actors, if there are any
-                    let (target, phrase) = if ctx.rng.gen_bool(0.3) && let Some(other) = ctx
+                    let (target, phrase) = if ctx.rng.random_bool(0.3) && let Some(other) = ctx
                         .state
                         .data()
                         .npcs
@@ -1055,7 +1066,7 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                 .map(|_, _| ()),
             );
         } else if matches!(ctx.npc.profession(), Some(Profession::Chef))
-            && ctx.rng.gen_bool(0.8)
+            && ctx.rng.random_bool(0.8)
             && let Some(ws_id) = ctx.state.data().sites[visiting_site].world_site
             && let Some(tavern) = ctx.index.sites.get(ws_id).plots().filter_map(|p| match_some!(p.kind(), PlotKind::Tavern(a) => a)).choose(&mut ctx.rng)
             && let Some((bar_pos, room_center)) = tavern.rooms.values().flat_map(|room|
@@ -1093,7 +1104,7 @@ fn villager(visiting_site: SiteId) -> impl Action<DefaultState> {
                 .then(socialize()
                     .repeat()
                     .map_state(|state: &mut DefaultState| &mut state.socialize_timer)
-                    .stop_if(timeout(ctx.rng.gen_range(30.0..90.0)))
+                    .stop_if(timeout(ctx.rng.random_range(30.0..90.0)))
                     .debug(|| "wait at plaza"))
                 .map(|_, _| ())
         }))
@@ -1162,9 +1173,9 @@ fn go_to_tavern(site_id: SiteId, tavern_plot: Id<site::Plot>) -> impl Action<Def
                         casual(
                             now(move |ctx, (last_action, _)| {
                                 *last_action = Some(action);
-                                goto(stage_aabr.min.map2(stage_aabr.max, |a, b| ctx.rng.gen_range(a..b)).with_z(stage_z), WALKING_SPEED, 1.0)
+                                goto(stage_aabr.min.map2(stage_aabr.max, |a, b| ctx.rng.random_range(a..b)).with_z(stage_z), WALKING_SPEED, 1.0)
                             })
-                            .then(just(move |ctx,_| ctx.controller.do_dance(None)).repeat().stop_if(timeout(ctx.rng.gen_range(20.0..30.0))))
+                            .then(just(move |ctx,_| ctx.controller.do_dance(None)).repeat().stop_if(timeout(ctx.rng.random_range(20.0..30.0))))
                             .map(|_, _| ())
                             .debug(|| "Dancing on the stage")
                         )
@@ -1177,7 +1188,7 @@ fn go_to_tavern(site_id: SiteId, tavern_plot: Id<site::Plot>) -> impl Action<Def
                                 goto(chair_pos.as_() + 0.5, WALKING_SPEED, 1.0)
                                     .then(just(move |ctx, _| ctx.controller.do_sit(None, Some(chair_pos)))
                                         // .then(socialize().map_state(|(_, timer)| timer))
-                                        .repeat().stop_if(timeout(ctx.rng.gen_range(30.0..60.0)))
+                                        .repeat().stop_if(timeout(ctx.rng.random_range(30.0..60.0)))
                                     )
                                     .map(|_, _| ())
                             })
@@ -1189,7 +1200,7 @@ fn go_to_tavern(site_id: SiteId, tavern_plot: Id<site::Plot>) -> impl Action<Def
                         casual(
                             now(move |ctx, (last_action, _)| {
                                 *last_action = Some(action);
-                                goto(bar_pos.as_() + 0.5, WALKING_SPEED, 1.0).then(socialize_repeat().stop_if(timeout(ctx.rng.gen_range(10.0..25.0)))).map(|_, _| ())
+                                goto(bar_pos.as_() + 0.5, WALKING_SPEED, 1.0).then(socialize_repeat().stop_if(timeout(ctx.rng.random_range(10.0..25.0)))).map(|_, _| ())
                             }).debug(|| "At the bar")
                         )
                     },
@@ -1498,8 +1509,9 @@ fn check_for_enemies<S: State>(ctx: &mut NpcCtx) -> Option<impl Action<S> + use<
 
 fn react_to_events<S: State>(ctx: &mut NpcCtx, _: &mut S) -> Option<impl Action<S> + use<S>> {
     check_inbox::<S>(ctx)
-        .map(|action| action.boxed())
-        .or_else(|| check_for_enemies(ctx).map(|action| action.boxed()))
+        .map(Action::boxed)
+        .or_else(|| check_for_enemies(ctx).map(Action::boxed))
+        .or_else(|| quest::check_for_timeouts(ctx).map(Action::boxed))
 }
 
 fn humanoid() -> impl Action<DefaultState> {
@@ -1527,10 +1539,34 @@ fn humanoid() -> impl Action<DefaultState> {
                     socialize().map_state(|state: &mut DefaultState| &mut state.socialize_timer),
                 )
             }
-        } else if let Some((tgt, _)) = ctx.npc.hiring
-            && util::actor_exists(ctx, tgt)
-        {
-            important(hired(tgt).interrupt_with(react_to_events))
+        } else if let Some(job) = &ctx.npc.job {
+            // NPCs should try to perform their jobs
+            important(
+                match job {
+                    Job::Hired(tgt, _) => {
+                        if util::actor_exists(ctx, *tgt) {
+                            hired(*tgt).boxed()
+                        } else {
+                            just(|ctx, _| ctx.controller.end_hiring()).boxed()
+                        }
+                    },
+                    Job::Quest(quest_id) => {
+                        match ctx.state.data().quests.get(*quest_id).map(|q| &q.kind) {
+                            // TODO: Support escort quests in which we are the escorter
+                            Some(QuestKind::Escort {
+                                escortee,
+                                escorter,
+                                to,
+                            }) if *escortee == Actor::Npc(ctx.npc_id) => {
+                                quest::escorted(*quest_id, *escorter, *to).boxed()
+                            },
+                            // A quest job that can't be acted upon gets ended
+                            _ => just(|ctx, _| ctx.controller.end_quest()).boxed(),
+                        }
+                    },
+                }
+                .interrupt_with(react_to_events),
+            )
         } else {
             let action = match ctx.npc.profession() {
                 Some(Profession::Adventurer(_) | Profession::Merchant) => adventure().l().l(),
@@ -1552,7 +1588,7 @@ fn humanoid() -> impl Action<DefaultState> {
 fn bird_large() -> impl Action<DefaultState> {
     now(|ctx, bearing: &mut Vec2<f32>| {
         *bearing = bearing
-            .map(|e| e + ctx.rng.gen_range(-0.1..0.1))
+            .map(|e| e + ctx.rng.random_range(-0.1..0.1))
             .try_normalized()
             .unwrap_or_default();
         let bearing_dist = 15.0;
@@ -1578,7 +1614,7 @@ fn bird_large() -> impl Action<DefaultState> {
         let height_factor = if trees {
             2.0
         } else {
-            ctx.rng.gen_range(0.4..0.9)
+            ctx.rng.random_range(0.4..0.9)
         };
 
         let data = ctx.state.data();
@@ -1669,21 +1705,30 @@ fn bird_large() -> impl Action<DefaultState> {
 }
 
 fn monster() -> impl Action<DefaultState> {
-    now(|ctx, bearing: &mut Vec2<f32>| {
-        *bearing = bearing
-            .map(|e| e + ctx.rng.gen_range(-0.1..0.1))
-            .try_normalized()
-            .unwrap_or_default();
-        let bearing_dist = 24.0;
-        let mut pos = ctx.npc.wpos.xy() + *bearing * bearing_dist;
-        let is_deep_water = ctx
-            .world
-            .sim()
-            .get(pos.as_().wpos_to_cpos())
-            .is_none_or(|c| {
-                c.alt - c.water_alt < -10.0 && (c.river.is_ocean() || c.river.is_lake())
-            });
-        if !is_deep_water {
+    now(
+        |ctx, (bearing, home_pos): &mut (Vec2<f32>, Option<Vec2<f32>>)| {
+            let home_pos = home_pos
+            // Move home locations every 10 minutes or so
+            .filter(|_| !ctx.rng.random_bool(ctx.dt as f64 / 600.0))
+            // Choose a new home location some distance away
+            .unwrap_or_else(|| ctx.npc.wpos.xy().map(|e| e + ctx.rng.random_range(-500.0..500.0)));
+
+            // Tend to want to move back towards the home location
+            *bearing += (home_pos - ctx.npc.wpos.xy()) * ctx.dt;
+            *bearing = bearing
+                .map(|e| e + ctx.rng.random_range(-1.0..1.0) * ctx.dt)
+                .try_normalized()
+                .unwrap_or_default();
+            let bearing_dist = 24.0;
+            let mut pos = ctx.npc.wpos.xy() + *bearing * bearing_dist;
+            let is_deep_water = ctx
+                .world
+                .sim()
+                .get(pos.as_().wpos_to_cpos())
+                .is_none_or(|c| {
+                    c.alt - c.water_alt < -10.0 && (c.river.is_ocean() || c.river.is_lake())
+                });
+            if !is_deep_water {
             goto_2d(pos, 0.7, 8.0)
         } else {
             *bearing *= -1.0;
@@ -1700,9 +1745,10 @@ fn monster() -> impl Action<DefaultState> {
             let bearing = *bearing;
             move || format!("Moving with a bearing of {:?}", bearing)
         })
-    })
+        },
+    )
     .repeat()
-    .with_state(Vec2::<f32>::zero())
+    .with_state((Vec2::<f32>::zero(), None))
     .map(|_, _| ())
 }
 

@@ -36,6 +36,7 @@ use common::{
     grid::Grid,
     link::Is,
     lod,
+    map::Marker,
     mounting::{Rider, VolumePos, VolumeRider},
     outcome::Outcome,
     recipe::{ComponentRecipeBook, RecipeBookManifest, RepairRecipeBook},
@@ -61,7 +62,7 @@ use common_net::{
         Notification, PingMsg, PlayerInfo, PlayerListUpdate, RegisterError, ServerGeneral,
         ServerInit, ServerRegisterAnswer,
         server::ServerDescription,
-        world_msg::{EconomyInfo, Marker, PoiInfo, SiteId},
+        world_msg::{EconomyInfo, PoiInfo, SiteId},
     },
     sync::WorldSyncExt,
 };
@@ -369,7 +370,7 @@ async fn connect_quic(
     validate_tls: bool,
 ) -> Result<network::Participant, crate::error::Error> {
     let config = if validate_tls {
-        quinn::ClientConfig::with_platform_verifier()
+        quinn::ClientConfig::try_with_platform_verifier()?
     } else {
         warn!(
             "skipping validation of server identity. There is no guarantee that the server you're \
@@ -622,7 +623,7 @@ impl Client {
         }
         // Pass the server info back to the caller to ensure they can access it even
         // if this function errors.
-        mem::swap(mismatched_server_info, &mut Some(server_info.clone()));
+        *mismatched_server_info = Some(server_info.clone());
         debug!("Auth Server: {:?}", server_info.auth_provider);
 
         ping_stream.send(PingMsg::Ping)?;
@@ -1044,13 +1045,13 @@ impl Client {
             sites: sites
                 .iter()
                 .filter_map(|m| {
-                    Some((m.id?, SiteMarker {
+                    Some((m.site?, SiteMarker {
                         marker: m.clone(),
                         economy: None,
                     }))
                 })
                 .collect(),
-            extra_markers: sites.iter().filter(|m| m.id.is_none()).cloned().collect(),
+            extra_markers: sites.iter().filter(|m| m.site.is_none()).cloned().collect(),
             possible_starting_sites,
             pois,
             component_recipe_book,
@@ -2195,7 +2196,7 @@ impl Client {
         self.send_msg(ClientGeneral::RequestSiteInfo(id))
     }
 
-    pub fn inventories(&self) -> ReadStorage<comp::Inventory> { self.state.read_storage() }
+    pub fn inventories(&self) -> ReadStorage<'_, comp::Inventory> { self.state.read_storage() }
 
     /// Send a chat message to the server.
     pub fn send_chat(&mut self, message: String) {
@@ -2234,6 +2235,19 @@ impl Client {
             //     self.send_msg(ClientGeneral::ChatMsg(msg));
             // }
             self.control_event(ControlEvent::Dialogue(target_uid, dialogue));
+        }
+    }
+
+    pub fn do_talk(&mut self, tgt: Option<EcsEntity>) {
+        if let Some(controller) = self
+            .state
+            .ecs()
+            .write_storage::<comp::Controller>()
+            .get_mut(self.entity())
+        {
+            controller.push_action(ControlAction::Talk(
+                tgt.and_then(|tgt| self.state.read_component_copied(tgt)),
+            ));
         }
     }
 
@@ -2392,10 +2406,11 @@ impl Client {
 
         // Save dead hardcore character ids to avoid displaying in the character list
         // while the server is still in the process of deleting the character
-        if self.current::<Hardcore>().is_some() && self.is_dead() {
-            if let Some(PresenceKind::Character(character_id)) = self.presence {
-                self.character_being_deleted = Some(character_id);
-            }
+        if self.current::<Hardcore>().is_some()
+            && self.is_dead()
+            && let Some(PresenceKind::Character(character_id)) = self.presence
+        {
+            self.character_being_deleted = Some(character_id);
         }
 
         // 4) Tick the client's LocalState
@@ -2425,19 +2440,19 @@ impl Client {
         }
 
         // 6) Update the server about the player's physics attributes.
-        if self.presence.is_some() {
-            if let (Some(pos), Some(vel), Some(ori)) = (
+        if self.presence.is_some()
+            && let (Some(pos), Some(vel), Some(ori)) = (
                 self.state.read_storage().get(self.entity()).cloned(),
                 self.state.read_storage().get(self.entity()).cloned(),
                 self.state.read_storage().get(self.entity()).cloned(),
-            ) {
-                self.in_game_stream.send(ClientGeneral::PlayerPhysics {
-                    pos,
-                    vel,
-                    ori,
-                    force_counter: self.force_update_counter,
-                })?;
-            }
+            )
+        {
+            self.in_game_stream.send(ClientGeneral::PlayerPhysics {
+                pos,
+                vel,
+                ori,
+                force_counter: self.force_update_counter,
+            })?;
         }
 
         /*
@@ -2587,20 +2602,18 @@ impl Client {
             if self
                 .lod_last_requested
                 .is_none_or(|i| i.elapsed() > Duration::from_secs(5))
-            {
-                if let Some(rpos) = Spiral2d::new()
+                && let Some(rpos) = Spiral2d::new()
                     .take((1 + self.lod_distance.ceil() as i32 * 2).pow(2) as usize)
                     .filter(|rpos| !self.lod_zones.contains_key(&(lod_zone + *rpos)))
                     .min_by_key(|rpos| rpos.magnitude_squared())
                     .filter(|rpos| {
                         rpos.map(|e| e as f32).magnitude() < (self.lod_distance - 0.5).max(0.0)
                     })
-                {
-                    self.send_msg_err(ClientGeneral::LodZoneRequest {
-                        key: lod_zone + rpos,
-                    })?;
-                    self.lod_last_requested = Some(Instant::now());
-                }
+            {
+                self.send_msg_err(ClientGeneral::LodZoneRequest {
+                    key: lod_zone + rpos,
+                })?;
+                self.lod_last_requested = Some(Instant::now());
             }
 
             // Cull LoD zones out of range
@@ -2749,13 +2762,13 @@ impl Client {
                     if let Some(old_entity) = old_player_entity.0 {
                         // Transfer controller to the new entity.
                         let mut controllers = self.state.ecs().write_storage::<Controller>();
-                        if let Some(controller) = controllers.remove(old_entity) {
-                            if let Err(e) = controllers.insert(entity, controller) {
-                                error!(
-                                    ?e,
-                                    "Failed to insert controller when setting new player entity!"
-                                );
-                            }
+                        if let Some(controller) = controllers.remove(old_entity)
+                            && let Err(e) = controllers.insert(entity, controller)
+                        {
+                            error!(
+                                ?e,
+                                "Failed to insert controller when setting new player entity!"
+                            );
                         }
                     }
                     if let Some(presence) = self.presence {

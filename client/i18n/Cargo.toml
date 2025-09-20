@@ -1,9 +1,9 @@
 [package]
-authors = ["juliancoffee <lightdarkdaughter@gmail.com>"]
-edition = "2021"
 name = "veloren-client-i18n"
-description = "Optional crate for internalization and diagnostic of existing localizations for frontends to consume"
 version = "0.13.0"
+description = "Optional crate for internalization and diagnostic of existing localizations for frontends to consume"
+edition.workspace = true
+authors = ["juliancoffee <lightdarkdaughter@gmail.com>"]
 
 [lints]
 workspace = true
@@ -16,14 +16,14 @@ serde = { workspace = true }
 # Localization
 unic-langid = { version = "0.9"}
 intl-memoizer = "0.5"
-fluent = "0.16"
-fluent-bundle = "0.15"
+fluent = "0.17"
+fluent-bundle = "0.16"
 # Utility
 hashbrown = { workspace = true }
 tracing = { workspace = true }
 # Bin
 clap = { workspace = true, optional = true }
-fluent-syntax = "0.11"
+fluent-syntax = "0.12"
 
 [[bin]]
 name = "i18n_check"

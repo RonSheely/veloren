@@ -136,12 +136,12 @@
 //!
 //! See [`rule::npc_ai`].
 
-#![feature(never_type, let_chains, binary_heap_drain_sorted)]
+#![feature(never_type, binary_heap_drain_sorted)]
 
 pub mod ai;
 pub mod data;
 pub mod event;
-pub mod gen;
+pub mod generate;
 pub mod rule;
 
 pub use self::{
@@ -176,7 +176,9 @@ type EventHandlersOf<E> = Vec<
 >;
 
 impl RtState {
-    pub fn new(data: Data) -> Self {
+    pub fn new(mut data: Data) -> Self {
+        data.prepare();
+
         let mut this = Self {
             resources: SendSyncAnyMap::new(),
             rules: SendSyncAnyMap::new(),

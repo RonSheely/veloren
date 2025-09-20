@@ -6,7 +6,6 @@ use crate::{
     GlobalState,
     ui::{ImageFrame, Tooltip, TooltipManager, Tooltipable, fonts::Fonts},
 };
-use chumsky::chain::Chain;
 use client::{self, Client};
 use common::{comp::group, resources::BattleMode, uid::Uid};
 use conrod_core::{
@@ -289,7 +288,7 @@ impl Widget for Social<'_> {
                     self.localized_strings.get_msg("hud-group-in_menu")
                 ), // character select or spectating
             };
-            let name_text_length_limited = if name_text.len() > 29 {
+            let name_text_length_limited = if name_text.chars().count() > 29 {
                 format!("{}...", name_text.chars().take(26).collect::<String>())
             } else {
                 name_text
@@ -489,13 +488,12 @@ impl Widget for Social<'_> {
             invite_button.set(state.ids.invite_button, ui)
         }
         .was_clicked()
+            && let Some(uid) = selected_to_invite
         {
-            if let Some(uid) = selected_to_invite {
-                events.push(Event::Invite(uid));
-                state.update(|s| {
-                    s.selected_uid = None;
-                });
-            }
+            events.push(Event::Invite(uid));
+            state.update(|s| {
+                s.selected_uid = None;
+            });
         }
 
         // Player Search

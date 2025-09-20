@@ -46,7 +46,7 @@
 use crate::audio::{AudioFrontend, MusicChannelTag};
 use client::Client;
 use common::{
-    assets::{self, AssetExt, AssetHandle},
+    assets::{Asset, AssetCache, AssetExt, AssetHandle, BoxedError, Ron, SharedString},
     calendar::{Calendar, CalendarEvent},
     terrain::{BiomeKind, SiteKindMeta},
     weather::WeatherKind,
@@ -54,7 +54,7 @@ use common::{
 use common_state::State;
 use hashbrown::HashMap;
 use kira::clock::ClockTime;
-use rand::{Rng, prelude::SliceRandom, rngs::ThreadRng, thread_rng};
+use rand::{Rng, prelude::IndexedRandom, rng, rngs::ThreadRng};
 use serde::Deserialize;
 use tracing::{debug, trace, warn};
 
@@ -200,12 +200,6 @@ impl Default for MusicTransitionManifest {
     }
 }
 
-impl assets::Asset for MusicTransitionManifest {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
-}
-
 fn time_f64(clock_time: ClockTime) -> f64 { clock_time.ticks as f64 + clock_time.fraction }
 
 impl MusicMgr {
@@ -248,41 +242,41 @@ impl MusicMgr {
         let healths = ecs.read_component::<Health>();
         let groups = ecs.read_component::<Group>();
         let mtm = audio.mtm.read();
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
-        if audio.combat_music_enabled {
-            if let Some(player_pos) = positions.get(player) {
-                // TODO: `group::ENEMY` will eventually be moved server-side with an
-                // alignment/faction rework, so this will need an alternative way to measure
-                // "in-combat-ness"
-                let num_nearby_entities: u32 = (&entities, &positions, &healths, &groups)
-                    .join()
-                    .map(|(entity, pos, health, group)| {
-                        if entity != player
-                            && group == &ENEMY
-                            && (player_pos.0 - pos.0).magnitude_squared()
-                                < mtm.combat_nearby_radius.powf(2.0)
-                        {
-                            (health.maximum() / mtm.combat_health_factor).ceil() as u32
-                        } else {
-                            0
-                        }
-                    })
-                    .sum();
+        if audio.combat_music_enabled
+            && let Some(player_pos) = positions.get(player)
+        {
+            // TODO: `group::ENEMY` will eventually be moved server-side with an
+            // alignment/faction rework, so this will need an alternative way to measure
+            // "in-combat-ness"
+            let num_nearby_entities: u32 = (&entities, &positions, &healths, &groups)
+                .join()
+                .map(|(entity, pos, health, group)| {
+                    if entity != player
+                        && group == &ENEMY
+                        && (player_pos.0 - pos.0).magnitude_squared()
+                            < mtm.0.combat_nearby_radius.powf(2.0)
+                    {
+                        (health.maximum() / mtm.0.combat_health_factor).ceil() as u32
+                    } else {
+                        0
+                    }
+                })
+                .sum();
 
-                if num_nearby_entities >= mtm.combat_nearby_high_thresh {
-                    activity_state = MusicActivity::Combat(CombatIntensity::High);
-                } else if num_nearby_entities >= mtm.combat_nearby_low_thresh {
-                    activity_state = MusicActivity::Combat(CombatIntensity::Low);
-                }
+            if num_nearby_entities >= mtm.0.combat_nearby_high_thresh {
+                activity_state = MusicActivity::Combat(CombatIntensity::High);
+            } else if num_nearby_entities >= mtm.0.combat_nearby_low_thresh {
+                activity_state = MusicActivity::Combat(CombatIntensity::Low);
             }
         }
 
         // Override combat music with explore music if the player is dead
-        if let Some(health) = healths.get(player) {
-            if health.is_dead {
-                activity_state = MusicActivity::Explore;
-            }
+        if let Some(health) = healths.get(player)
+            && health.is_dead
+        {
+            activity_state = MusicActivity::Explore;
         }
 
         let mut music_state = match self.last_activity {
@@ -310,7 +304,7 @@ impl MusicMgr {
         // combat might end, providing a proper "buffer".
         // interrupt_delay dictates the time between attempted interrupts
         let interrupt = matches!(music_state, MusicState::Transition(_, _))
-            && time_f64(now) - time_f64(last_interrupt_attempt) > mtm.interrupt_delay as f64;
+            && time_f64(now) - time_f64(last_interrupt_attempt) > mtm.0.interrupt_delay as f64;
 
         // Hack to end combat music since there is currently nothing that detects
         // transitions away
@@ -510,7 +504,7 @@ impl MusicMgr {
                 .biomes
                 .iter()
                 .find(|b| b.0 == current_biome)
-                .map_or(1.0, |b| (1.0_f32 / (b.1 as f32)))
+                .map_or(1.0, |b| 1.0_f32 / (b.1 as f32))
         });
         debug!(
             "selecting new track for {:?}: {:?}",
@@ -582,7 +576,7 @@ impl MusicMgr {
                         )
                 ) && matches!(client.current_site(), SiteKindMeta::Settlement(_))
                 {
-                    rng.gen_range(120.0 * spacing_multiplier..180.0 * spacing_multiplier)
+                    rng.random_range(120.0 * spacing_multiplier..180.0 * spacing_multiplier)
                 } else if matches!(
                     music_state,
                     MusicState::Activity(MusicActivity::Explore)
@@ -592,7 +586,7 @@ impl MusicMgr {
                         )
                 ) && matches!(client.current_site(), SiteKindMeta::Dungeon(_))
                 {
-                    rng.gen_range(10.0 * spacing_multiplier..20.0 * spacing_multiplier)
+                    rng.random_range(10.0 * spacing_multiplier..20.0 * spacing_multiplier)
                 } else if matches!(
                     music_state,
                     MusicState::Activity(MusicActivity::Explore)
@@ -602,7 +596,7 @@ impl MusicMgr {
                         )
                 ) && matches!(client.current_site(), SiteKindMeta::Cave)
                 {
-                    rng.gen_range(20.0 * spacing_multiplier..40.0 * spacing_multiplier)
+                    rng.random_range(20.0 * spacing_multiplier..40.0 * spacing_multiplier)
                 } else if matches!(
                     music_state,
                     MusicState::Activity(MusicActivity::Explore)
@@ -611,14 +605,14 @@ impl MusicMgr {
                             MusicActivity::Combat(CombatIntensity::High)
                         )
                 ) {
-                    rng.gen_range(120.0 * spacing_multiplier..240.0 * spacing_multiplier)
+                    rng.random_range(120.0 * spacing_multiplier..240.0 * spacing_multiplier)
                 } else if matches!(
                     music_state,
                     MusicState::Activity(MusicActivity::Combat(_)) | MusicState::Transition(_, _)
                 ) {
                     0.0
                 } else {
-                    rng.gen_range(30.0 * spacing_multiplier..60.0 * spacing_multiplier)
+                    rng.random_range(30.0 * spacing_multiplier..60.0 * spacing_multiplier)
                 };
         }
         silence_between_tracks_seconds
@@ -714,17 +708,12 @@ impl MusicMgr {
         }
     }
 }
-impl assets::Asset for SoundtrackCollection<RawSoundtrackItem> {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
-}
-
-impl assets::Compound for SoundtrackCollection<SoundtrackItem> {
-    fn load(_: assets::AnyCache, id: &assets::SharedString) -> Result<Self, assets::BoxedError> {
-        let manifest: AssetHandle<SoundtrackCollection<RawSoundtrackItem>> = AssetExt::load(id)?;
+impl Asset for SoundtrackCollection<SoundtrackItem> {
+    fn load(_: &AssetCache, id: &SharedString) -> Result<Self, BoxedError> {
+        let manifest: AssetHandle<Ron<SoundtrackCollection<RawSoundtrackItem>>> =
+            AssetExt::load(id)?;
         let mut soundtrack = SoundtrackCollection::default();
-        for item in manifest.read().tracks.iter().cloned() {
+        for item in manifest.read().0.tracks.iter().cloned() {
             match item {
                 RawSoundtrackItem::Individual(track) => soundtrack.tracks.push(track),
                 RawSoundtrackItem::Segmented {
@@ -767,7 +756,7 @@ mod tests {
     #[test]
     fn test_load_soundtracks() {
         let _: AssetHandle<SoundtrackCollection<SoundtrackItem>> =
-            SoundtrackCollection::load_expect("voxygen.audio.soundtrack");
+            AssetExt::load_expect("voxygen.audio.soundtrack");
         for event in CalendarEvent::iter() {
             match event {
                 CalendarEvent::Halloween => {

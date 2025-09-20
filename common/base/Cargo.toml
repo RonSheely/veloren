@@ -1,9 +1,9 @@
 [package]
-authors = ["Marcel Märtens <marcel.cochem@googlemail.com>"]
-edition = "2021"
 name = "veloren-common-base"
-description = "minimal dependency for crates to now depend on whole common"
 version = "0.10.0"
+description = "minimal dependency for crates to now depend on whole common"
+edition.workspace = true
+authors = ["Marcel Märtens <marcel.cochem@googlemail.com>"]
 
 [lints]
 workspace = true
@@ -19,4 +19,4 @@ directories-next = "2.0"
 # NOTE: This must be kept in sync with the `tracy-client` version used by the
 # `tracing-tracy` version in `common/frontend`.
 # Using `=` here keeps `cargo update` from breaking this.
-profiling = { version = "=1.0.16", default-features = false, optional = true }
+profiling = { version = "=1.0.17", default-features = false, optional = true }

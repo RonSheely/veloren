@@ -23,8 +23,8 @@ use i18n::{LanguageMetadata, LocalizationHandle};
 use iced::{Column, Container, HorizontalAlignment, Length, Row, Space, text_input};
 //ImageFrame, Tooltip,
 use crate::settings::Settings;
-use common::assets::{self, AssetExt};
-use rand::{seq::SliceRandom, thread_rng};
+use common::assets::{AssetExt, Image, Ron};
+use rand::{rng, seq::IndexedRandom};
 use std::time::Duration;
 use tracing::warn;
 
@@ -305,7 +305,7 @@ impl Controls {
         let version = common::util::DISPLAY_VERSION_LONG.clone();
         let alpha = format!("Veloren {}", common::util::DISPLAY_VERSION.as_str());
 
-        let credits = Credits::load_expect_cloned("credits");
+        let credits = Ron::<Credits>::load_expect_cloned("credits").into_inner();
 
         // Note: Keeping in case we re-add the disclaimer
         let screen = /* if settings.show_disclaimer {
@@ -363,7 +363,7 @@ impl Controls {
         settings: &Settings,
         dt: f32,
         #[cfg(feature = "singleplayer")] worlds: &crate::singleplayer::SingleplayerWorlds,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         self.time += dt as f64;
 
         // TODO: consider setting this as the default in the renderer
@@ -589,14 +589,13 @@ impl Controls {
                 if let Screen::Connecting {
                     connection_state, ..
                 } = &mut self.screen
+                    && let ConnectionState::AuthTrustPrompt { auth_server, .. } = connection_state
                 {
-                    if let ConnectionState::AuthTrustPrompt { auth_server, .. } = connection_state {
-                        let auth_server = std::mem::take(auth_server);
-                        let added = matches!(msg, Message::TrustPromptAdd);
+                    let auth_server = std::mem::take(auth_server);
+                    let added = matches!(msg, Message::TrustPromptAdd);
 
-                        *connection_state = ConnectionState::InProgress;
-                        events.push(Event::AuthServerTrust(auth_server, added));
-                    }
+                    *connection_state = ConnectionState::InProgress;
+                    events.push(Event::AuthServerTrust(auth_server, added));
                 }
             },
             Message::CloseError => {
@@ -723,7 +722,7 @@ impl MainMenuUi {
 
         let bg_img_spec = rand_bg_image_spec();
 
-        let bg_img = assets::Image::load_expect(bg_img_spec).read().to_image();
+        let bg_img = Image::load_expect(bg_img_spec).read().to_image();
         let controls = Controls::new(
             fonts,
             Imgs::load(&mut ui).expect("Failed to load images"),
@@ -839,4 +838,4 @@ impl MainMenuUi {
     pub fn render<'a>(&'a self, drawer: &mut UiDrawer<'_, 'a>) { self.ui.render(drawer); }
 }
 
-pub fn rand_bg_image_spec() -> &'static str { BG_IMGS.choose(&mut thread_rng()).unwrap() }
+pub fn rand_bg_image_spec() -> &'static str { BG_IMGS.choose(&mut rng()).unwrap() }

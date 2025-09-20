@@ -25,7 +25,7 @@ use common::{
     util::Dir,
     vol::ReadVol,
 };
-use rand::{Rng, prelude::SliceRandom};
+use rand::{Rng, seq::IndexedRandom};
 use std::{f32::consts::PI, time::Duration};
 use vek::*;
 use world::util::CARDINALS;
@@ -42,7 +42,7 @@ fn projectile_multi_angle(projectile_spread: f32, num_projectiles: u32) -> f32 {
     (180.0 / PI) * projectile_spread * (num_projectiles - 1) as f32
 }
 
-fn rng_from_span(rng: &mut impl Rng, span: [f32; 2]) -> f32 { rng.gen_range(span[0]..=span[1]) }
+fn rng_from_span(rng: &mut impl Rng, span: [f32; 2]) -> f32 { rng.random_range(span[0]..=span[1]) }
 
 impl AgentData<'_> {
     // Intended for any agent that has one attack, that attack is a melee attack,
@@ -65,12 +65,12 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
             if self.body.map(|b| b.is_humanoid()).unwrap_or(false)
                 && attack_data.dist_sqrd < 16.0f32.powi(2)
-                && rng.gen::<f32>() < 0.02
+                && rng.random::<f32>() < 0.02
             {
                 controller.push_basic_input(InputKind::Roll);
             }
@@ -243,7 +243,7 @@ impl AgentData<'_> {
 
         // stay centered
         let home = agent.patrol_origin.unwrap_or(self.pos.0.round());
-        self.path_toward_target(agent, controller, home, read_data, Path::Full, None);
+        self.path_toward_target(agent, controller, home, read_data, Path::AtTarget, None);
         // teleport home if straying too far
         if (home - self.pos.0).xy().magnitude_squared() > (10.0_f32).powi(2) {
             controller.push_action(ControlAction::StartInput {
@@ -347,7 +347,7 @@ impl AgentData<'_> {
             if agent.combat_state.timers[DASH_TIMER] > 2.0 {
                 agent.combat_state.timers[DASH_TIMER] = 0.0;
             }
-            match rng.gen_range(0..2) {
+            match rng.random_range(0..2) {
                 0 => controller.push_basic_input(InputKind::Primary),
                 _ => controller.push_basic_input(InputKind::Ability(3)),
             };
@@ -366,7 +366,7 @@ impl AgentData<'_> {
             && agent.combat_state.timers[DASH_TIMER] > 4.0
             && attack_data.angle < 45.0
         {
-            match rng.gen_range(0..2) {
+            match rng.random_range(0..2) {
                 0 => controller.push_basic_input(InputKind::Secondary),
                 _ => controller.push_basic_input(InputKind::Ability(1)),
             };
@@ -377,7 +377,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -454,7 +454,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -492,7 +492,7 @@ impl AgentData<'_> {
             controller.push_basic_input(InputKind::Primary);
         } else if attack_data.dist_sqrd < RETREAT_DIST.powi(2) {
             // Attempt to move quickly away from target if too close
-            if let Some((bearing, _)) = agent.chaser.chase(
+            if let Some((bearing, _, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -501,6 +501,7 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
                 let flee_dir = -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero);
                 let pos = self.pos.0.xy().with_z(self.pos.0.z + 1.5);
@@ -515,6 +516,7 @@ impl AgentData<'_> {
                     // If able to flee, flee
                     controller.inputs.move_dir = flee_dir;
                     if !self.char_state.is_attack() {
+                        self.unstuck_if(stuck, controller);
                         controller.inputs.look_dir = -controller.inputs.look_dir;
                     }
                 } else {
@@ -524,7 +526,7 @@ impl AgentData<'_> {
             }
         } else if attack_data.dist_sqrd < PREF_DIST.powi(2) {
             // Attempt to move away from target if too close, while still attacking
-            if let Some((bearing, _)) = agent.chaser.chase(
+            if let Some((bearing, _, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -533,10 +535,12 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
                 if line_of_sight_with_target() {
                     controller.push_basic_input(InputKind::Primary);
                 }
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero);
             }
@@ -546,7 +550,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -648,7 +652,7 @@ impl AgentData<'_> {
                 if options.is_empty() {
                     return;
                 }
-                let i = rng.gen_range(0..options.len());
+                let i = rng.random_range(0..options.len());
                 set_ability(controller, slot, options.swap_remove(i));
             };
 
@@ -662,15 +666,15 @@ impl AgentData<'_> {
                     // Scornful swipe
                     set_ability(controller, 0, 0);
                     // Tremor or vigorous bash
-                    set_ability(controller, 1, rng.gen_range(1..3));
+                    set_ability(controller, 1, rng.random_range(1..3));
                 },
                 HammerTactics::AttackIntermediate => {
                     // Scornful swipe
                     set_ability(controller, 0, 0);
                     // Tremor or vigorous bash
-                    set_ability(controller, 1, rng.gen_range(1..3));
+                    set_ability(controller, 1, rng.random_range(1..3));
                     // Retaliate, spine cracker, or breach
-                    set_ability(controller, 2, rng.gen_range(3..6));
+                    set_ability(controller, 2, rng.random_range(3..6));
                 },
                 HammerTactics::AttackAdvanced => {
                     // Scornful swipe, tremor, vigorous bash, retaliate, spine cracker, or breach
@@ -678,7 +682,7 @@ impl AgentData<'_> {
                     set_random(controller, 0, &mut options);
                     set_random(controller, 1, &mut options);
                     set_random(controller, 2, &mut options);
-                    set_ability(controller, 3, rng.gen_range(6..8));
+                    set_ability(controller, 3, rng.random_range(6..8));
                 },
                 HammerTactics::AttackExpert => {
                     // Scornful swipe, tremor, vigorous bash, retaliate, spine cracker, breach, iron
@@ -688,21 +692,21 @@ impl AgentData<'_> {
                     set_random(controller, 1, &mut options);
                     set_random(controller, 2, &mut options);
                     set_random(controller, 3, &mut options);
-                    set_ability(controller, 4, rng.gen_range(8..10));
+                    set_ability(controller, 4, rng.random_range(8..10));
                 },
                 HammerTactics::SupportSimple => {
                     // Scornful swipe
                     set_ability(controller, 0, 0);
                     // Heavy whorl or intercept
-                    set_ability(controller, 1, rng.gen_range(10..12));
+                    set_ability(controller, 1, rng.random_range(10..12));
                 },
                 HammerTactics::SupportIntermediate => {
                     // Scornful swipe
                     set_ability(controller, 0, 0);
                     // Heavy whorl or intercept
-                    set_ability(controller, 1, rng.gen_range(10..12));
+                    set_ability(controller, 1, rng.random_range(10..12));
                     // Retaliate, spine cracker, or breach
-                    set_ability(controller, 2, rng.gen_range(12..15));
+                    set_ability(controller, 2, rng.random_range(12..15));
                 },
                 HammerTactics::SupportAdvanced => {
                     // Scornful swipe, heavy whorl, intercept, pile driver, lung pummel, or helm
@@ -711,7 +715,7 @@ impl AgentData<'_> {
                     set_random(controller, 0, &mut options);
                     set_random(controller, 1, &mut options);
                     set_random(controller, 2, &mut options);
-                    set_ability(controller, 3, rng.gen_range(15..17));
+                    set_ability(controller, 3, rng.random_range(15..17));
                 },
                 HammerTactics::SupportExpert => {
                     // Scornful swipe, heavy whorl, intercept, pile driver, lung pummel, helm
@@ -721,7 +725,7 @@ impl AgentData<'_> {
                     set_random(controller, 1, &mut options);
                     set_random(controller, 2, &mut options);
                     set_random(controller, 3, &mut options);
-                    set_ability(controller, 4, rng.gen_range(17..19));
+                    set_ability(controller, 4, rng.random_range(17..19));
                 },
             }
 
@@ -861,14 +865,14 @@ impl AgentData<'_> {
                     agent.combat_state.int_counters[IntCounters::Tactic as usize],
                 ) {
                     HammerTactics::Unskilled => {
-                        if rng.gen_bool(0.5) {
+                        if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
                         }
                     },
                     HammerTactics::Simple => {
-                        if rng.gen_bool(0.5) {
+                        if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -877,37 +881,37 @@ impl AgentData<'_> {
                     HammerTactics::AttackSimple | HammerTactics::SupportSimple => {
                         if could_use_input(InputKind::Ability(0), ability_preferences) {
                             next_input = Some(InputKind::Ability(0));
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
                         }
                     },
                     HammerTactics::AttackIntermediate | HammerTactics::SupportIntermediate => {
-                        let random_ability = InputKind::Ability(rng.gen_range(0..3));
+                        let random_ability = InputKind::Ability(rng.random_range(0..3));
                         if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
                         }
                     },
                     HammerTactics::AttackAdvanced | HammerTactics::SupportAdvanced => {
-                        let random_ability = InputKind::Ability(rng.gen_range(0..5));
+                        let random_ability = InputKind::Ability(rng.random_range(0..5));
                         if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
                         }
                     },
                     HammerTactics::AttackExpert | HammerTactics::SupportExpert => {
-                        let random_ability = InputKind::Ability(rng.gen_range(0..5));
+                        let random_ability = InputKind::Ability(rng.random_range(0..5));
                         if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1269,7 +1273,7 @@ impl AgentData<'_> {
                     let mut next_input = None;
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
-                    } else if rng.gen_bool(0.5) {
+                    } else if rng.random_bool(0.5) {
                         next_input = Some(InputKind::Primary);
                     } else {
                         next_input = Some(InputKind::Secondary);
@@ -1295,10 +1299,10 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let attempt_ability = InputKind::Ability(rng.gen_range(0..5));
+                        let attempt_ability = InputKind::Ability(rng.random_range(0..5));
                         if could_use_input(attempt_ability, ability_preferences) {
                             next_input = Some(attempt_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1325,12 +1329,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(3..5));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(3..5));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Heavy))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1339,7 +1343,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1366,12 +1370,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(3..5));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(3..5));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Agile))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1380,7 +1384,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1407,12 +1411,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(3..5));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(3..5));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Defensive))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1423,7 +1427,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(3));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1450,12 +1454,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(3..5));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(3..5));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Crippling))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1464,7 +1468,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1491,12 +1495,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(3..5));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(3..5));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Cleaving))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1505,7 +1509,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1532,12 +1536,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(1..3));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(1..3));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Heavy))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1546,7 +1550,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1573,12 +1577,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(1..3));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(1..3));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Agile))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1587,7 +1591,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1614,12 +1618,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(1..3));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..4));
+                        let stance_ability = InputKind::Ability(rng.random_range(1..3));
+                        let random_ability = InputKind::Ability(rng.random_range(1..4));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Defensive))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1629,10 +1633,10 @@ impl AgentData<'_> {
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
                         } else if could_use_input(InputKind::Ability(4), ability_preferences)
-                            && rng.gen_bool(2.0 * read_data.dt.0 as f64)
+                            && rng.random_bool(2.0 * read_data.dt.0 as f64)
                         {
                             next_input = Some(InputKind::Ability(4));
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1659,12 +1663,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(1..3));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(1..3));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Crippling))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1673,7 +1677,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1700,12 +1704,12 @@ impl AgentData<'_> {
                     if let Some(input) = current_input {
                         continue_current_input(input, &mut next_input);
                     } else {
-                        let stance_ability = InputKind::Ability(rng.gen_range(1..3));
-                        let random_ability = InputKind::Ability(rng.gen_range(1..5));
+                        let stance_ability = InputKind::Ability(rng.random_range(1..3));
+                        let random_ability = InputKind::Ability(rng.random_range(1..5));
                         if !matches!(self.stance, Some(Stance::Sword(SwordStance::Cleaving))) {
                             if could_use_input(stance_ability, ability_preferences) {
                                 next_input = Some(stance_ability);
-                            } else if rng.gen_bool(0.5) {
+                            } else if rng.random_bool(0.5) {
                                 next_input = Some(InputKind::Primary);
                             } else {
                                 next_input = Some(InputKind::Secondary);
@@ -1714,7 +1718,7 @@ impl AgentData<'_> {
                             next_input = Some(InputKind::Ability(0));
                         } else if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -1995,7 +1999,7 @@ impl AgentData<'_> {
                     agent.combat_state.int_counters[IntCounters::Tactic as usize],
                 ) {
                     AxeTactics::Unskilled => {
-                        if rng.gen_bool(0.5) {
+                        if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -2006,7 +2010,7 @@ impl AgentData<'_> {
                     | AxeTactics::RivingSimple => {
                         if could_use_input(InputKind::Ability(0), ability_preferences) {
                             next_input = Some(InputKind::Ability(0));
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -2015,10 +2019,10 @@ impl AgentData<'_> {
                     AxeTactics::SavageIntermediate
                     | AxeTactics::MercilessIntermediate
                     | AxeTactics::RivingIntermediate => {
-                        let random_ability = InputKind::Ability(rng.gen_range(0..3));
+                        let random_ability = InputKind::Ability(rng.random_range(0..3));
                         if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -2027,10 +2031,10 @@ impl AgentData<'_> {
                     AxeTactics::SavageAdvanced
                     | AxeTactics::MercilessAdvanced
                     | AxeTactics::RivingAdvanced => {
-                        let random_ability = InputKind::Ability(rng.gen_range(0..5));
+                        let random_ability = InputKind::Ability(rng.random_range(0..5));
                         if could_use_input(random_ability, ability_preferences) {
                             next_input = Some(random_ability);
-                        } else if rng.gen_bool(0.5) {
+                        } else if rng.random_bool(0.5) {
                             next_input = Some(InputKind::Primary);
                         } else {
                             next_input = Some(InputKind::Secondary);
@@ -2123,7 +2127,7 @@ impl AgentData<'_> {
                 .skill_set
                 .has_skill(Skill::Bow(BowSkill::UnlockShotgun))
                 && self.energy.current() > 45.0
-                && rng.gen_bool(0.5)
+                && rng.random_bool(0.5)
             {
                 // Use shotgun if target close and have sufficient energy
                 controller.push_basic_input(InputKind::Ability(0));
@@ -2162,7 +2166,7 @@ impl AgentData<'_> {
         // work is less necessary.
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
             // Attempt to move away from target if too close
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2171,13 +2175,15 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
             }
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             // Else attempt to circle target if neither too close nor too far
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2186,11 +2192,13 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if line_of_sight_with_target() && attack_data.angle < 45.0 {
                     controller.inputs.move_dir = bearing
                         .xy()
-                        .rotated_z(rng.gen_range(0.5..1.57))
+                        .rotated_z(rng.random_range(0.5..1.57))
                         .try_normalized()
                         .unwrap_or_else(Vec2::zero)
                         * speed;
@@ -2205,7 +2213,7 @@ impl AgentData<'_> {
             // Sometimes try to roll
             if self.body.map(|b| b.is_humanoid()).unwrap_or(false)
                 && attack_data.dist_sqrd < 16.0f32.powi(2)
-                && rng.gen::<f32>() < 0.01
+                && rng.random::<f32>() < 0.01
             {
                 controller.push_basic_input(InputKind::Roll);
             }
@@ -2216,7 +2224,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2310,7 +2318,7 @@ impl AgentData<'_> {
         // work is less necessary.
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
             // Attempt to move away from target if too close
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2319,13 +2327,15 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
             }
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             // Else attempt to circle target if neither too close nor too far
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2334,7 +2344,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if entities_have_line_of_sight(
                     self.pos,
                     self.body,
@@ -2347,7 +2359,7 @@ impl AgentData<'_> {
                 {
                     controller.inputs.move_dir = bearing
                         .xy()
-                        .rotated_z(rng.gen_range(-1.57..-0.5))
+                        .rotated_z(rng.random_range(-1.57..-0.5))
                         .try_normalized()
                         .unwrap_or_else(Vec2::zero)
                         * speed;
@@ -2363,7 +2375,7 @@ impl AgentData<'_> {
             if self.body.is_some_and(|b| b.is_humanoid())
                 && attack_data.dist_sqrd < 16.0f32.powi(2)
                 && !matches!(self.char_state, CharacterState::Shockwave(_))
-                && rng.gen::<f32>() < 0.02
+                && rng.random::<f32>() < 0.02
             {
                 controller.push_basic_input(InputKind::Roll);
             }
@@ -2374,7 +2386,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2460,7 +2472,7 @@ impl AgentData<'_> {
         // so duplicated work is less necessary.
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
             // Attempt to move away from target if too close
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2469,13 +2481,15 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
             }
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             // Else attempt to circle target if neither too close nor too far
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2484,11 +2498,13 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if line_of_sight_with_target() && attack_data.angle < 45.0 {
                     controller.inputs.move_dir = bearing
                         .xy()
-                        .rotated_z(rng.gen_range(0.5..1.57))
+                        .rotated_z(rng.random_range(0.5..1.57))
                         .try_normalized()
                         .unwrap_or_else(Vec2::zero)
                         * speed;
@@ -2504,7 +2520,7 @@ impl AgentData<'_> {
             if self.body.map(|b| b.is_humanoid()).unwrap_or(false)
                 && !matches!(self.char_state, CharacterState::BasicAura(_))
                 && attack_data.dist_sqrd < 16.0f32.powi(2)
-                && rng.gen::<f32>() < 0.01
+                && rng.random::<f32>() < 0.01
             {
                 controller.push_basic_input(InputKind::Roll);
             }
@@ -2515,7 +2531,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2580,7 +2596,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2610,7 +2626,7 @@ impl AgentData<'_> {
             };
         // stay centered
         if (home - self.pos.0).xy().magnitude_squared() > (3.0_f32).powi(2) {
-            self.path_toward_target(agent, controller, home, read_data, Path::Full, None);
+            self.path_toward_target(agent, controller, home, read_data, Path::AtTarget, None);
         // shoot at targets above
         } else if tgt_data.pos.0.z > home.z + 5.0 {
             controller.push_basic_input(InputKind::Ability(0))
@@ -2689,7 +2705,7 @@ impl AgentData<'_> {
                 // if you haven't chosen a direction to go in, choose now
                 agent.combat_state.int_counters
                     [ActionStateCountersI::CounterIHandleCircleChargeAttack as usize] =
-                    1 + rng.gen_bool(0.5) as u8;
+                    1 + rng.random_bool(0.5) as u8;
             }
             if agent.combat_state.counters
                 [ActionStateCountersF::CounterFHandleCircleChargeAttack as usize]
@@ -2751,7 +2767,7 @@ impl AgentData<'_> {
                 // if too far away from target, move towards them
                 Path::Separate
             } else {
-                Path::Partial
+                Path::AtTarget
             };
             self.path_toward_target(agent, controller, tgt_data.pos.0, read_data, path, None);
         }
@@ -2783,7 +2799,7 @@ impl AgentData<'_> {
 
             controller.push_basic_input(InputKind::Primary);
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -2792,7 +2808,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if attack_data.angle < 15.0
                     && entities_have_line_of_sight(
                         self.pos,
@@ -2852,7 +2870,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2905,7 +2923,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2949,7 +2967,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -2987,7 +3005,7 @@ impl AgentData<'_> {
             let path = if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
                 Path::Separate
             } else {
-                Path::Partial
+                Path::AtTarget
             };
             self.path_toward_target(agent, controller, tgt_data.pos.0, read_data, path, None);
         }
@@ -3040,7 +3058,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -3087,7 +3105,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -3116,7 +3134,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -3185,7 +3203,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -3248,7 +3266,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -3450,7 +3468,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
 
@@ -3571,7 +3589,7 @@ impl AgentData<'_> {
             }
             agent.combat_state.timers[Timers::AttackRand as usize] += read_data.dt.0;
         }
-        self.path_toward_target(agent, controller, home, read_data, Path::Full, None);
+        self.path_toward_target(agent, controller, home, read_data, Path::AtTarget, None);
     }
 
     pub fn handle_flamekeeper_attack(
@@ -3655,7 +3673,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
             agent.combat_state.timers[Timers::AttackRand as usize] += read_data.dt.0;
@@ -3850,7 +3868,7 @@ impl AgentData<'_> {
             {
                 controller.push_basic_input(InputKind::Primary);
             }
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -3859,7 +3877,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
                 if (self.pos.0.z - tgt_data.pos.0.z) < 35.0 {
@@ -3955,7 +3975,7 @@ impl AgentData<'_> {
         // Set fly to false
         controller.push_cancel_input(InputKind::Fly);
         if attack_data.dist_sqrd > 30.0_f32.powi(2) {
-            if rng.gen_bool(0.05)
+            if rng.random_bool(0.05)
                 && entities_have_line_of_sight(
                     self.pos,
                     self.body,
@@ -3969,7 +3989,7 @@ impl AgentData<'_> {
             {
                 controller.push_basic_input(InputKind::Primary);
             }
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -3978,7 +3998,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
                 if (self.pos.0.z - tgt_data.pos.0.z) < 20.0 {
@@ -4002,18 +4024,18 @@ impl AgentData<'_> {
             controller.inputs.move_dir =
                 move_dir.xy().try_normalized().unwrap_or_else(Vec2::zero) * 2.0;
             controller.inputs.move_z = move_dir.z - 0.5;
-            if rng.gen_bool(0.05)
+            if rng.random_bool(0.05)
                 && attack_data.dist_sqrd > (4.0 * attack_data.min_attack_dist).powi(2)
                 && attack_data.angle < 15.0
             {
                 controller.push_basic_input(InputKind::Primary);
             }
-        } else if rng.gen_bool(0.05)
+        } else if rng.random_bool(0.05)
             && attack_data.dist_sqrd > (4.0 * attack_data.min_attack_dist).powi(2)
             && attack_data.angle < 15.0
         {
             controller.push_basic_input(InputKind::Primary);
-        } else if rng.gen_bool(0.5)
+        } else if rng.random_bool(0.5)
             && (self.pos.0.z - tgt_data.pos.0.z) < 15.0
             && attack_data.dist_sqrd > (4.0 * attack_data.min_attack_dist).powi(2)
         {
@@ -4167,7 +4189,7 @@ impl AgentData<'_> {
                 * if attack_data.in_min_range() { 0.3 } else { 1.0 };
             controller.push_basic_input(InputKind::Primary);
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -4176,7 +4198,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if attack_data.angle < 15.0
                     && entities_have_line_of_sight(
                         self.pos,
@@ -4233,7 +4257,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -4272,7 +4296,7 @@ impl AgentData<'_> {
         {
             controller.inputs.move_dir = Vec2::zero();
             controller.push_basic_input(InputKind::Primary);
-        } else if rng.gen_bool(0.01)
+        } else if rng.random_bool(0.01)
             && attack_data.angle < 60.0
             && attack_data.dist_sqrd > (2.0 * attack_data.min_attack_dist).powi(2)
         {
@@ -4283,7 +4307,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -4322,7 +4346,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -4439,7 +4463,7 @@ impl AgentData<'_> {
                     controller,
                     goto,
                     read_data,
-                    Path::Partial,
+                    Path::AtTarget,
                     (attack_data.dist_sqrd
                         < (attack_data.min_attack_dist + MINOTAUR_ATTACK_RANGE / 3.0).powi(2))
                     .then_some(0.1),
@@ -4486,7 +4510,7 @@ impl AgentData<'_> {
         }
         // Chase target, when target is above, retreat to chamber
         if cheesed_from_above {
-            self.path_toward_target(agent, controller, home, read_data, Path::Full, None);
+            self.path_toward_target(agent, controller, home, read_data, Path::AtTarget, None);
         // delay chasing to counter wall cheese
         } else if agent.combat_state.timers[Timers::CanSeeTarget as usize] > 2.0
         // always chase when in hallway to boss chamber
@@ -4497,7 +4521,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 (attack_data.dist_sqrd
                     < (attack_data.min_attack_dist + MINOTAUR_ATTACK_RANGE / 3.0).powi(2))
                 .then_some(0.1),
@@ -4577,7 +4601,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Partial,
+            Path::AtTarget,
             (attack_data.dist_sqrd
                 < (attack_data.min_attack_dist + CYCLOPS_MELEE_RANGE / 2.0).powi(2))
             .then_some(0.1),
@@ -4655,7 +4679,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Full,
+            Path::AtTarget,
             (attack_data.dist_sqrd < (attack_data.min_attack_dist + MELEE_RANGE / 2.0).powi(2))
                 .then_some(0.1),
         );
@@ -4845,7 +4869,7 @@ impl AgentData<'_> {
         };
         // attempt to path towards target, move away from exiit  if target is cheesing
         // from below
-        self.path_toward_target(agent, controller, path, read_data, Path::Partial, None);
+        self.path_toward_target(agent, controller, path, read_data, Path::AtTarget, None);
     }
 
     pub fn handle_yeti_attack(
@@ -4905,7 +4929,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Partial,
+            Path::AtTarget,
             attack_data.in_min_range().then_some(0.1),
         );
     }
@@ -4973,7 +4997,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Partial,
+            Path::AtTarget,
             None,
         );
     }
@@ -5028,7 +5052,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Partial,
+            Path::AtTarget,
             None,
         );
     }
@@ -5224,7 +5248,7 @@ impl AgentData<'_> {
                         controller.push_basic_input(InputKind::Ability(0));
                     }
                     // otherwise, randomise between firebreath and pumpkin
-                    else if rng.gen_bool(0.5) {
+                    else if rng.random_bool(0.5) {
                         controller.push_basic_input(InputKind::Secondary);
                     } else {
                         controller.push_basic_input(InputKind::Ability(0));
@@ -5293,7 +5317,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -5436,10 +5460,10 @@ impl AgentData<'_> {
             // Calculate the "cheesing factor" (height of the normalized position difference)
             && (tgt_data.pos.0 - self.pos.0).normalized().map(f32::abs).z > 0.6
             // Make it happen at about every 10 seconds!
-            && rng.gen_bool((0.2 * read_data.dt.0).min(1.0) as f64)
+            && rng.random_bool((0.2 * read_data.dt.0).min(1.0) as f64)
         {
             agent.combat_state.int_counters[ActionStateICounters::CurrentAbility as usize] =
-                rng.gen_range(5..=6);
+                rng.random_range(5..=6);
         } else if attack_data.dist_sqrd < GIGAS_MELEE_RANGE.powi(2) {
             // Bonk the target every 10-8 s
             if agent.combat_state.timers[ActionStateTimers::Bonk as usize] > 10. {
@@ -5450,14 +5474,14 @@ impl AgentData<'_> {
                     c.static_data.ability_info.ability.is_some_and(|meta| matches!(meta.ability, Ability::MainWeaponAux(6)))
                 ) {
                     agent.combat_state.timers[ActionStateTimers::Bonk as usize] =
-                        rng.gen_range(0.0..3.0);
+                        rng.random_range(0.0..3.0);
                 }
             // Have a small chance at starting a mixup attack
             } else if agent.combat_state.timers[ActionStateTimers::AttackChange as usize] > 4.0
-                && rng.gen_bool(0.1 * read_data.dt.0.min(1.0) as f64)
+                && rng.random_bool(0.1 * read_data.dt.0.min(1.0) as f64)
             {
                 agent.combat_state.int_counters[ActionStateICounters::CurrentAbility as usize] =
-                    rng.gen_range(1..=4);
+                    rng.random_range(1..=4);
             // Melee the target, do a whirlwind whenever he is trying to go
             // behind or after every 5s
             } else if attack_data.angle > 90.0
@@ -5505,7 +5529,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Partial,
+            Path::AtTarget,
             attack_data.in_min_range().then_some(0.1),
         );
     }
@@ -5543,7 +5567,7 @@ impl AgentData<'_> {
                 > 3.0
             {
                 controller.push_basic_input(InputKind::Secondary);
-            } else if has_energy(50.0) && rng.gen_bool(0.9) {
+            } else if has_energy(50.0) && rng.random_bool(0.9) {
                 use_leap(controller);
             } else {
                 controller.push_basic_input(InputKind::Primary);
@@ -5569,7 +5593,7 @@ impl AgentData<'_> {
                     read_data,
                 )
             {
-                if rng.gen_bool(0.5) && has_energy(50.0) {
+                if rng.random_bool(0.5) && has_energy(50.0) {
                     use_leap(controller);
                 } else if agent.combat_state.timers
                     [ActionStateTimers::TimerHandleHammerAttack as usize]
@@ -5616,7 +5640,7 @@ impl AgentData<'_> {
         };
 
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
-            if rng.gen_bool(0.5) && has_energy(15.0) {
+            if rng.random_bool(0.5) && has_energy(15.0) {
                 controller.push_basic_input(InputKind::Secondary);
             } else if attack_data.angle < 15.0 {
                 controller.push_basic_input(InputKind::Primary);
@@ -5624,7 +5648,7 @@ impl AgentData<'_> {
         } else if attack_data.dist_sqrd < (4.0 * attack_data.min_attack_dist).powi(2)
             && line_of_sight_with_target()
         {
-            if rng.gen_bool(0.5) && has_energy(15.0) {
+            if rng.random_bool(0.5) && has_energy(15.0) {
                 controller.push_basic_input(InputKind::Secondary);
             } else if has_energy(20.0) {
                 use_trap(controller);
@@ -5634,7 +5658,7 @@ impl AgentData<'_> {
         if has_energy(50.0) {
             if attack_data.dist_sqrd < (10.0 * attack_data.min_attack_dist).powi(2) {
                 // Attempt to circle the target if neither too close nor too far
-                if let Some((bearing, speed)) = agent.chaser.chase(
+                if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                     &*read_data.terrain,
                     self.pos.0,
                     self.vel.0,
@@ -5643,11 +5667,13 @@ impl AgentData<'_> {
                         min_tgt_dist: 1.25,
                         ..self.traversal_config
                     },
+                    &read_data.time,
                 ) {
+                    self.unstuck_if(stuck, controller);
                     if line_of_sight_with_target() && attack_data.angle < 45.0 {
                         controller.inputs.move_dir = bearing
                             .xy()
-                            .rotated_z(rng.gen_range(0.5..1.57))
+                            .rotated_z(rng.random_range(0.5..1.57))
                             .try_normalized()
                             .unwrap_or_else(Vec2::zero)
                             * 2.0
@@ -5667,7 +5693,7 @@ impl AgentData<'_> {
                     controller,
                     tgt_data.pos.0,
                     read_data,
-                    Path::Partial,
+                    Path::AtTarget,
                     None,
                 );
             }
@@ -5678,7 +5704,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -5908,7 +5934,7 @@ impl AgentData<'_> {
                             agent.combat_state.conditions
                                 [ActionStateConditions::VerticalStrikeCombo as usize] = true
                         },
-                        WHIRLWIND if rng.gen_bool(0.2) => {
+                        WHIRLWIND if rng.random_bool(0.2) => {
                             agent.combat_state.conditions
                                 [ActionStateConditions::WhirlwindTwice as usize] = true
                         },
@@ -5917,12 +5943,12 @@ impl AgentData<'_> {
                     controller.push_basic_input(rand_special);
 
                     agent.combat_state.timers[ActionStateTimers::Special as usize] =
-                        rng.gen_range(0.0..3.0 + 5.0 * damage_fraction);
+                        rng.random_range(0.0..3.0 + 5.0 * damage_fraction);
                 } else if attack_data.angle > 90.0 {
                     // Cast an aoe ability to hit the target if they are behind the entity
                     let rand_aoe = rand_aoe(rng);
                     match rand_aoe {
-                        WHIRLWIND if rng.gen_bool(0.2) => {
+                        WHIRLWIND if rng.random_bool(0.2) => {
                             agent.combat_state.conditions
                                 [ActionStateConditions::WhirlwindTwice as usize] = true
                         },
@@ -5936,13 +5962,13 @@ impl AgentData<'_> {
                 }
             } else if attack_data.dist_sqrd < RANGED_RANGE.powi(2) {
                 // Use ranged ability if target is out of melee range
-                if rng.gen_bool(0.05) {
+                if rng.random_bool(0.05) {
                     controller.push_basic_input(rand_ranged(rng));
                 }
             } else if attack_data.dist_sqrd < LEAP_RANGE.powi(2) {
                 // Use a gap closer if the target is even further away
                 controller.push_basic_input(LAVA_LEAP);
-            } else if rng.gen_bool(0.1) {
+            } else if rng.random_bool(0.1) {
                 // Use a targeted fire pillar if the target is out of range of everything else
                 cast_targeted_fire_pillar(controller);
             }
@@ -5953,7 +5979,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Partial,
+            Path::AtTarget,
             attack_data.in_min_range().then_some(0.1),
         );
 
@@ -6036,14 +6062,14 @@ impl AgentData<'_> {
             && could_use(SELF_IMMOLATION)
         {
             agent.combat_state.timers[ActionStateTimers::SinceSelfImmolation as usize] =
-                rng.gen_range(0.0..5.0);
+                rng.random_range(0.0..5.0);
 
             controller.push_basic_input(SELF_IMMOLATION);
-        } else if rng.gen_bool(0.35) && could_use(KNOCKBACK_COMBO) {
+        } else if rng.random_bool(0.35) && could_use(KNOCKBACK_COMBO) {
             controller.push_basic_input(KNOCKBACK_COMBO);
         } else if could_use(DOUBLE_STRIKE) {
             controller.push_basic_input(DOUBLE_STRIKE);
-        } else if rng.gen_bool(0.2) && could_use(FLAME_WAVE) {
+        } else if rng.random_bool(0.2) && could_use(FLAME_WAVE) {
             controller.push_basic_input(FLAME_WAVE);
         }
 
@@ -6052,7 +6078,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Full,
+            Path::AtTarget,
             None,
         );
     }
@@ -6119,20 +6145,20 @@ impl AgentData<'_> {
             && (could_use(FLAME_WALL) || could_use(SUMMON_CRUX))
         {
             agent.combat_state.timers[ActionStateTimers::SinceAbility as usize] =
-                rng.gen_range(0.0..5.0);
+                rng.random_range(0.0..5.0);
 
-            if could_use(FLAME_WALL) && (rng.gen_bool(0.5) || !could_use(SUMMON_CRUX)) {
+            if could_use(FLAME_WALL) && (rng.random_bool(0.5) || !could_use(SUMMON_CRUX)) {
                 controller.push_basic_input(FLAME_WALL);
             } else {
                 controller.push_basic_input(SUMMON_CRUX);
             }
-        } else if rng.gen_bool(0.5) && could_use(FIREBALL) {
+        } else if rng.random_bool(0.5) && could_use(FIREBALL) {
             controller.push_basic_input(FIREBALL);
         }
 
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
             // Attempt to move away from target if too close
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -6141,13 +6167,15 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
             }
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             // Else attempt to circle target if neither too close nor too far
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -6156,7 +6184,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if entities_have_line_of_sight(
                     self.pos,
                     self.body,
@@ -6169,7 +6199,7 @@ impl AgentData<'_> {
                 {
                     controller.inputs.move_dir = bearing
                         .xy()
-                        .rotated_z(rng.gen_range(-1.57..-0.5))
+                        .rotated_z(rng.random_range(-1.57..-0.5))
                         .try_normalized()
                         .unwrap_or_else(Vec2::zero)
                         * speed;
@@ -6188,7 +6218,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -6303,7 +6333,7 @@ impl AgentData<'_> {
         // so duplicated work is less necessary.
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
             // Attempt to move away from target if too close
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -6312,13 +6342,15 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
             }
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             // Else attempt to circle target if neither too close nor too far
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -6327,7 +6359,9 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if entities_have_line_of_sight(
                     self.pos,
                     self.body,
@@ -6340,7 +6374,7 @@ impl AgentData<'_> {
                 {
                     controller.inputs.move_dir = bearing
                         .xy()
-                        .rotated_z(rng.gen_range(0.5..1.57))
+                        .rotated_z(rng.random_range(0.5..1.57))
                         .try_normalized()
                         .unwrap_or_else(Vec2::zero)
                         * speed;
@@ -6356,7 +6390,7 @@ impl AgentData<'_> {
             if self.body.map(|b| b.is_humanoid()).unwrap_or(false)
                 && !matches!(self.char_state, CharacterState::BasicAura(_))
                 && attack_data.dist_sqrd < 16.0f32.powi(2)
-                && rng.gen::<f32>() < 0.01
+                && rng.random::<f32>() < 0.01
             {
                 controller.push_basic_input(InputKind::Roll);
             }
@@ -6367,7 +6401,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -6413,7 +6447,7 @@ impl AgentData<'_> {
         // so duplicated work is less necessary.
         if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
             // Attempt to move away from target if too close
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -6422,13 +6456,15 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 controller.inputs.move_dir =
                     -bearing.xy().try_normalized().unwrap_or_else(Vec2::zero) * speed;
             }
         } else if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             // Else attempt to circle target if neither too close nor too far
-            if let Some((bearing, speed)) = agent.chaser.chase(
+            if let Some((bearing, speed, stuck)) = agent.chaser.chase(
                 &*read_data.terrain,
                 self.pos.0,
                 self.vel.0,
@@ -6437,11 +6473,13 @@ impl AgentData<'_> {
                     min_tgt_dist: 1.25,
                     ..self.traversal_config
                 },
+                &read_data.time,
             ) {
+                self.unstuck_if(stuck, controller);
                 if line_of_sight_with_target() && attack_data.angle < 45.0 {
                     controller.inputs.move_dir = bearing
                         .xy()
-                        .rotated_z(rng.gen_range(0.5..1.57))
+                        .rotated_z(rng.random_range(0.5..1.57))
                         .try_normalized()
                         .unwrap_or_else(Vec2::zero)
                         * speed;
@@ -6460,7 +6498,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -6500,7 +6538,7 @@ impl AgentData<'_> {
         {
             agent.combat_state.timers[ActionStateTimers::TimerSummon as usize] = 0.0;
             agent.combat_state.timers[ActionStateTimers::SelectSummon as usize] =
-                rng.gen_range(0..=3) as f32;
+                rng.random_range(0..=3) as f32;
         } else {
             agent.combat_state.timers[ActionStateTimers::TimerSummon as usize] += read_data.dt.0;
         }
@@ -6528,7 +6566,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -6561,7 +6599,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -6629,14 +6667,14 @@ impl AgentData<'_> {
                     controller,
                     tgt_data.pos.0,
                     read_data,
-                    Path::Full,
+                    Path::AtTarget,
                     None,
                 );
             } else {
                 controller.push_basic_input(InputKind::Ability(0));
             }
         } else {
-            self.path_toward_target(agent, controller, dest, read_data, Path::Full, None);
+            self.path_toward_target(agent, controller, dest, read_data, Path::AtTarget, None);
         }
     }
 
@@ -6679,7 +6717,7 @@ impl AgentData<'_> {
             } else {
                 station_1
             };
-            self.path_toward_target(agent, controller, station, read_data, Path::Full, None);
+            self.path_toward_target(agent, controller, station, read_data, Path::AtTarget, None);
         }
         // if target gets very close, shoot dagon bombs and lay out sea urchins
         else if attack_data.dist_sqrd < (2.0 * attack_data.min_attack_dist).powi(2) {
@@ -6721,7 +6759,7 @@ impl AgentData<'_> {
         let path = if attack_data.dist_sqrd < MAX_PATH_DIST.powi(2) {
             Path::Separate
         } else {
-            Path::Partial
+            Path::AtTarget
         };
         self.path_toward_target(agent, controller, tgt_data.pos.0, read_data, path, None);
     }
@@ -6812,7 +6850,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -6876,7 +6914,7 @@ impl AgentData<'_> {
                     controller,
                     tgt_data.pos.0,
                     read_data,
-                    Path::Partial,
+                    Path::AtTarget,
                     None,
                 );
             } else {
@@ -7009,7 +7047,7 @@ impl AgentData<'_> {
         if is_in_strike_range && is_in_strike_angle {
             // on timer, randomly mixup between all attacks
             if agent.combat_state.timers[MIXUP] > MIXUP_COOLDOWN {
-                let randomise: u8 = rng.gen_range(1..=3);
+                let randomise: u8 = rng.random_range(1..=3);
                 match randomise {
                     1 => controller.push_basic_input(InputKind::Ability(0)), // shockwave
                     2 => controller.push_basic_input(InputKind::Primary),    // strike
@@ -7051,7 +7089,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -7219,7 +7257,7 @@ impl AgentData<'_> {
         }
         // on timer, summon a new random totem
         else if agent.combat_state.timers[SUMMON_TOTEM] > TOTEM_COOLDOWN {
-            controller.push_basic_input(InputKind::Ability(rng.gen_range(1..=3)));
+            controller.push_basic_input(InputKind::Ability(rng.random_range(1..=3)));
         }
         // on timer and in range, use a heavy attack
         // assumes: barrange_max_range * BARRAGE_RANGE_FACTOR > shockwave_range *
@@ -7237,7 +7275,7 @@ impl AgentData<'_> {
                 // in shockwave range, randomise between barrage and shockwave
                 else if attack_data.dist_sqrd < (shockwave_range * SHOCKWAVE_RANGE_FACTOR).powi(2)
                 {
-                    if rng.gen_bool(0.5) {
+                    if rng.random_bool(0.5) {
                         controller.push_basic_input(InputKind::Secondary);
                     } else {
                         controller.push_basic_input(InputKind::Ability(0));
@@ -7274,7 +7312,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -7338,7 +7376,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -7357,8 +7395,8 @@ impl AgentData<'_> {
         const ROTATE_DIR_CONDITION: usize = 0;
         agent.combat_state.timers[ROTATE_TIMER] -= read_data.dt.0;
         if agent.combat_state.timers[ROTATE_TIMER] < 0.0 {
-            agent.combat_state.conditions[ROTATE_DIR_CONDITION] = rng.gen_bool(0.5);
-            agent.combat_state.timers[ROTATE_TIMER] = rng.gen::<f32>() * 5.0;
+            agent.combat_state.conditions[ROTATE_DIR_CONDITION] = rng.random_bool(0.5);
+            agent.combat_state.timers[ROTATE_TIMER] = rng.random::<f32>() * 5.0;
         }
         let primary = self.extract_ability(AbilityInput::Primary);
         let secondary = self.extract_ability(AbilityInput::Secondary);
@@ -7581,7 +7619,7 @@ impl AgentData<'_> {
         } else if could_use_input(InputKind::Primary) {
             controller.push_basic_input(InputKind::Primary);
             false
-        } else if could_use_input(InputKind::Secondary) && rng.gen_bool(0.5) {
+        } else if could_use_input(InputKind::Secondary) && rng.random_bool(0.5) {
             controller.push_basic_input(InputKind::Secondary);
             false
         } else if could_use_input(InputKind::Ability(1)) {
@@ -7593,10 +7631,10 @@ impl AgentData<'_> {
 
         if matches!(self.char_state, CharacterState::LeapMelee(_)) {
             let tgt_vec = tgt_data.pos.0.xy() - self.pos.0.xy();
-            if tgt_vec.magnitude_squared() > 2_f32.powi(2) {
-                if let Some(look_dir) = Dir::from_unnormalized(Vec3::from(tgt_vec)) {
-                    controller.inputs.look_dir = look_dir;
-                }
+            if tgt_vec.magnitude_squared() > 2_f32.powi(2)
+                && let Some(look_dir) = Dir::from_unnormalized(Vec3::from(tgt_vec))
+            {
+                controller.inputs.look_dir = look_dir;
             }
         }
 
@@ -7686,13 +7724,13 @@ impl AgentData<'_> {
         };
 
         let move_forwards = if !continued_attack {
-            if could_use_input(InputKind::Primary) && rng.gen_bool(0.4) {
+            if could_use_input(InputKind::Primary) && rng.random_bool(0.4) {
                 controller.push_basic_input(InputKind::Primary);
                 false
-            } else if could_use_input(InputKind::Secondary) && rng.gen_bool(0.8) {
+            } else if could_use_input(InputKind::Secondary) && rng.random_bool(0.8) {
                 controller.push_basic_input(InputKind::Secondary);
                 false
-            } else if could_use_input(InputKind::Ability(1)) && rng.gen_bool(0.9) {
+            } else if could_use_input(InputKind::Ability(1)) && rng.random_bool(0.9) {
                 controller.push_basic_input(InputKind::Ability(1));
                 true
             } else if could_use_input(InputKind::Ability(0)) {
@@ -7796,7 +7834,7 @@ impl AgentData<'_> {
 
         let move_forwards = if !continued_attack {
             if could_use_input(InputKind::Ability(1))
-                && rng.gen_bool(0.9)
+                && rng.random_bool(0.9)
                 && (agent.combat_state.timers[ActionStateTimers::RegrowHeadNoDamage as usize] > 5.0
                     || agent.combat_state.timers[ActionStateTimers::RegrowHeadNoAttack as usize]
                         > 6.0)
@@ -7804,16 +7842,16 @@ impl AgentData<'_> {
             {
                 controller.push_basic_input(InputKind::Ability(2));
                 false
-            } else if has_heads && could_use_input(InputKind::Primary) && rng.gen_bool(0.8) {
+            } else if has_heads && could_use_input(InputKind::Primary) && rng.random_bool(0.8) {
                 controller.push_basic_input(InputKind::Primary);
                 true
-            } else if has_heads && could_use_input(InputKind::Secondary) && rng.gen_bool(0.4) {
+            } else if has_heads && could_use_input(InputKind::Secondary) && rng.random_bool(0.4) {
                 controller.push_basic_input(InputKind::Secondary);
                 false
-            } else if has_heads && could_use_input(InputKind::Ability(1)) && rng.gen_bool(0.6) {
+            } else if has_heads && could_use_input(InputKind::Ability(1)) && rng.random_bool(0.6) {
                 controller.push_basic_input(InputKind::Ability(1));
                 true
-            } else if !has_heads && could_use_input(InputKind::Ability(3)) && rng.gen_bool(0.7) {
+            } else if !has_heads && could_use_input(InputKind::Ability(3)) && rng.random_bool(0.7) {
                 controller.push_basic_input(InputKind::Ability(3));
                 true
             } else if could_use_input(InputKind::Ability(0)) {
@@ -7932,25 +7970,27 @@ impl AgentData<'_> {
             }
         }
 
-        let move_forwards = if could_use_input(InputKind::Primary) && rng.gen_bool(primary_chance) {
+        let move_forwards = if could_use_input(InputKind::Primary)
+            && rng.random_bool(primary_chance)
+        {
             controller.push_basic_input(InputKind::Primary);
             false
-        } else if could_use_input(InputKind::Secondary) && rng.gen_bool(secondary_chance) {
+        } else if could_use_input(InputKind::Secondary) && rng.random_bool(secondary_chance) {
             controller.push_basic_input(InputKind::Secondary);
             false
-        } else if could_use_input(InputKind::Ability(0)) && rng.gen_bool(ability_chances[0]) {
+        } else if could_use_input(InputKind::Ability(0)) && rng.random_bool(ability_chances[0]) {
             controller.push_basic_input(InputKind::Ability(0));
             false
-        } else if could_use_input(InputKind::Ability(1)) && rng.gen_bool(ability_chances[1]) {
+        } else if could_use_input(InputKind::Ability(1)) && rng.random_bool(ability_chances[1]) {
             controller.push_basic_input(InputKind::Ability(1));
             false
-        } else if could_use_input(InputKind::Ability(2)) && rng.gen_bool(ability_chances[2]) {
+        } else if could_use_input(InputKind::Ability(2)) && rng.random_bool(ability_chances[2]) {
             controller.push_basic_input(InputKind::Ability(2));
             false
-        } else if could_use_input(InputKind::Ability(3)) && rng.gen_bool(ability_chances[3]) {
+        } else if could_use_input(InputKind::Ability(3)) && rng.random_bool(ability_chances[3]) {
             controller.push_basic_input(InputKind::Ability(3));
             false
-        } else if could_use_input(InputKind::Ability(4)) && rng.gen_bool(ability_chances[4]) {
+        } else if could_use_input(InputKind::Ability(4)) && rng.random_bool(ability_chances[4]) {
             controller.push_basic_input(InputKind::Ability(4));
             false
         } else {
@@ -8001,7 +8041,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Partial,
+                Path::AtTarget,
                 None,
             );
         }
@@ -8041,7 +8081,7 @@ impl AgentData<'_> {
                 controller,
                 tgt_data.pos.0,
                 read_data,
-                Path::Full,
+                Path::AtTarget,
                 None,
             );
         }
@@ -8144,7 +8184,7 @@ impl AgentData<'_> {
                     controller,
                     tgt_data.pos.0,
                     read_data,
-                    Path::Partial,
+                    Path::AtTarget,
                     None,
                 );
             }
@@ -8294,8 +8334,8 @@ impl AgentData<'_> {
         };
 
         if !agent.combat_state.initialized {
-            agent.combat_state.conditions[ROTATE_CCW_CONDITION] = rng.gen_bool(0.5);
-            agent.combat_state.counters[SWITCH_ROTATE_COUNTER] = rng.gen_range(5.0..20.0);
+            agent.combat_state.conditions[ROTATE_CCW_CONDITION] = rng.random_bool(0.5);
+            agent.combat_state.counters[SWITCH_ROTATE_COUNTER] = rng.random_range(5.0..20.0);
             agent.combat_state.initialized = true;
         }
 
@@ -8322,7 +8362,7 @@ impl AgentData<'_> {
         {
             agent.combat_state.conditions[ROTATE_CCW_CONDITION] =
                 !agent.combat_state.conditions[ROTATE_CCW_CONDITION];
-            agent.combat_state.counters[SWITCH_ROTATE_COUNTER] = rng.gen_range(5.0..20.0);
+            agent.combat_state.counters[SWITCH_ROTATE_COUNTER] = rng.random_range(5.0..20.0);
         }
 
         let move_farther = attack_data.dist_sqrd < BACKPEDAL_DIST.powi(2);
@@ -8347,7 +8387,7 @@ impl AgentData<'_> {
             true
         };
 
-        if let Some((bearing, speed)) = agent.chaser.chase(
+        if let Some((bearing, speed, stuck)) = agent.chaser.chase(
             &*read_data.terrain,
             self.pos.0,
             self.vel.0,
@@ -8356,7 +8396,9 @@ impl AgentData<'_> {
                 min_tgt_dist: 1.25,
                 ..self.traversal_config
             },
+            &read_data.time,
         ) {
+            self.unstuck_if(stuck, controller);
             if entities_have_line_of_sight(
                 self.pos,
                 self.body,
@@ -8372,12 +8414,12 @@ impl AgentData<'_> {
                     move_closer,
                     move_farther,
                 ) {
-                    (true, true, false) => rng.gen_range(-1.5..-0.5),
-                    (true, false, true) => rng.gen_range(-2.2..-1.7),
-                    (true, _, _) => rng.gen_range(-1.7..-1.5),
-                    (false, true, false) => rng.gen_range(0.5..1.5),
-                    (false, false, true) => rng.gen_range(1.7..2.2),
-                    (false, _, _) => rng.gen_range(1.5..1.7),
+                    (true, true, false) => rng.random_range(-1.5..-0.5),
+                    (true, false, true) => rng.random_range(-2.2..-1.7),
+                    (true, _, _) => rng.random_range(-1.7..-1.5),
+                    (false, true, false) => rng.random_range(0.5..1.5),
+                    (false, false, true) => rng.random_range(1.7..2.2),
+                    (false, _, _) => rng.random_range(1.5..1.7),
                 };
                 controller.inputs.move_dir = bearing
                     .xy()
@@ -8484,7 +8526,7 @@ impl AgentData<'_> {
         let home = agent.patrol_origin.unwrap_or(self.pos.0.round());
         // stay centered
         if (home - self.pos.0).xy().magnitude_squared() > (2.0_f32).powi(2) {
-            self.path_toward_target(agent, controller, home, read_data, Path::Full, None);
+            self.path_toward_target(agent, controller, home, read_data, Path::AtTarget, None);
         } else if !agent.combat_state.conditions[Conditions::AttackToggle as usize] {
             // always begin with sprite summon
             controller.push_basic_input(InputKind::Primary);
@@ -8531,7 +8573,7 @@ impl AgentData<'_> {
             controller,
             tgt_data.pos.0,
             read_data,
-            Path::Full,
+            Path::AtTarget,
             None,
         );
     }

@@ -9,7 +9,7 @@ use crate::{
 };
 use client::Client;
 use common::{
-    assets::{AssetExt, ObjAsset},
+    assets::{AssetExt, Obj},
     lod,
     spiral::Spiral2d,
     util::{srgb_to_linear, srgba_to_linear},
@@ -365,7 +365,7 @@ fn create_lod_terrain_mesh(detail: u32) -> Mesh<LodTerrainVertex> {
 ///   worldgen lod::Object.
 /// - `InstCol Glow` The object will use the instance color. Glow is ignored.
 fn make_lod_object(name: &str, renderer: &mut Renderer) -> Model<LodObjectVertex> {
-    let model = ObjAsset::load_expect(&format!("voxygen.lod.{}", name));
+    let model = Obj::load_expect(&format!("voxygen.lod.{}", name));
     let mesh = model
         .read()
         .0
@@ -376,7 +376,7 @@ fn make_lod_object(name: &str, renderer: &mut Renderer) -> Model<LodObjectVertex
                 .next()
                 .and_then(|r| Some(Rgb::new(r, color.next()?, color.next()?)))
                 .unwrap_or(Rgb::broadcast(127));
-            let color = srgb_to_linear(color.map(|c| (c as f32 / 255.0)));
+            let color = srgb_to_linear(color.map(|c| c as f32 / 255.0));
             let flags = if objname.contains("InstCol") && objname.contains("Glow") {
                 VertexFlags::INST_COLOR | VertexFlags::GLOW
             } else if objname.contains("Glow") {

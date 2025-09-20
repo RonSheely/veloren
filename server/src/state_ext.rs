@@ -36,7 +36,6 @@ use common_net::{
     sync::WorldSyncExt,
 };
 use common_state::State;
-use rand::prelude::*;
 use specs::{
     Builder, Entity as EcsEntity, EntityBuilder as EcsEntityBuilder, Join, WorldExt, WriteStorage,
     storage::{GenericReadStorage, GenericWriteStorage},
@@ -58,11 +57,12 @@ pub trait StateExt {
         inventory: Inventory,
         body: comp::Body,
         scale: comp::Scale,
-    ) -> EcsEntityBuilder;
+    ) -> EcsEntityBuilder<'_>;
     /// Create an entity with only a position
-    fn create_empty(&mut self, pos: comp::Pos) -> EcsEntityBuilder;
+    fn create_empty(&mut self, pos: comp::Pos) -> EcsEntityBuilder<'_>;
     /// Build a static object entity
-    fn create_object(&mut self, pos: comp::Pos, object: comp::object::Body) -> EcsEntityBuilder;
+    fn create_object(&mut self, pos: comp::Pos, object: comp::object::Body)
+    -> EcsEntityBuilder<'_>;
     /// Create an item drop or merge the item with an existing drop, if a
     /// suitable candidate exists.
     fn create_item_drop(
@@ -79,7 +79,7 @@ pub trait StateExt {
         ori: comp::Ori,
         ship: comp::ship::Body,
         make_collider: F,
-    ) -> EcsEntityBuilder;
+    ) -> EcsEntityBuilder<'_>;
     /// Build a projectile
     fn create_projectile(
         &mut self,
@@ -87,22 +87,22 @@ pub trait StateExt {
         vel: comp::Vel,
         body: comp::Body,
         projectile: comp::Projectile,
-    ) -> EcsEntityBuilder;
+    ) -> EcsEntityBuilder<'_>;
     /// Build a shockwave entity
     fn create_shockwave(
         &mut self,
         properties: comp::shockwave::Properties,
         pos: comp::Pos,
         ori: comp::Ori,
-    ) -> EcsEntityBuilder;
+    ) -> EcsEntityBuilder<'_>;
     /// Creates a safezone
-    fn create_safezone(&mut self, range: Option<f32>, pos: comp::Pos) -> EcsEntityBuilder;
+    fn create_safezone(&mut self, range: Option<f32>, pos: comp::Pos) -> EcsEntityBuilder<'_>;
     fn create_wiring(
         &mut self,
         pos: comp::Pos,
         object: comp::object::Body,
         wiring_element: wiring::WiringElement,
-    ) -> EcsEntityBuilder;
+    ) -> EcsEntityBuilder<'_>;
     // NOTE: currently only used for testing
     /// Queues chunk generation in the view distance of the persister, this
     /// entity must be built before those chunks are received (the builder
@@ -114,11 +114,11 @@ pub trait StateExt {
         view_distance: u32,
         world: &std::sync::Arc<world::World>,
         index: &world::IndexOwned,
-    ) -> EcsEntityBuilder;
+    ) -> EcsEntityBuilder<'_>;
     /// Creates a teleporter entity, which allows players to teleport to the
     /// `target` position. You might want to require the teleporting entity
     /// to not have agro for teleporting.
-    fn create_teleporter(&mut self, pos: comp::Pos, portal: PortalData) -> EcsEntityBuilder;
+    fn create_teleporter(&mut self, pos: comp::Pos, portal: PortalData) -> EcsEntityBuilder<'_>;
     /// Insert common/default components for a new character joining the server
     fn initialize_character_data(
         &mut self,
@@ -188,9 +188,8 @@ impl StateExt for State {
         inventory: Inventory,
         body: comp::Body,
         scale: comp::Scale,
-    ) -> EcsEntityBuilder {
-        let npc = self
-            .ecs_mut()
+    ) -> EcsEntityBuilder<'_> {
+        self.ecs_mut()
             .create_entity_synced()
             .with(pos)
             .with(comp::Vel(Vec3::zero()))
@@ -220,12 +219,10 @@ impl StateExt for State {
             .with(comp::Auras::default())
             .with(comp::EnteredAuras::default())
             .with(comp::Stance::default())
-            .maybe_with(body.heads().map(comp::body::parts::Heads::new));
-
-        npc
+            .maybe_with(body.heads().map(comp::body::parts::Heads::new))
     }
 
-    fn create_empty(&mut self, pos: comp::Pos) -> EcsEntityBuilder {
+    fn create_empty(&mut self, pos: comp::Pos) -> EcsEntityBuilder<'_> {
         self.ecs_mut()
             .create_entity_synced()
             .with(pos)
@@ -233,7 +230,11 @@ impl StateExt for State {
             .with(comp::Ori::default())
     }
 
-    fn create_object(&mut self, pos: comp::Pos, object: comp::object::Body) -> EcsEntityBuilder {
+    fn create_object(
+        &mut self,
+        pos: comp::Pos,
+        object: comp::object::Body,
+    ) -> EcsEntityBuilder<'_> {
         let body = comp::Body::Object(object);
         self.create_empty(pos)
             .with(body.mass())
@@ -300,7 +301,7 @@ impl StateExt for State {
                 .with(pos)
                 .with(ori)
                 .with(vel)
-                .with(item_body.orientation(&mut thread_rng()))
+                .with(item_body.orientation(&mut rand::rng()))
                 .with(item_body.mass())
                 .with(item_body.density())
                 .with(body.collider())
@@ -322,9 +323,10 @@ impl StateExt for State {
         ori: comp::Ori,
         ship: comp::ship::Body,
         make_collider: F,
-    ) -> EcsEntityBuilder {
+    ) -> EcsEntityBuilder<'_> {
         let body = comp::Body::Ship(ship);
-        let builder = self
+
+        self
             .ecs_mut()
             .create_entity_synced()
             .with(pos)
@@ -350,9 +352,7 @@ impl StateExt for State {
             }, body))
             .with(comp::SkillSet::default())
             .with(comp::ActiveAbilities::default())
-            .with(comp::Combo::default());
-
-        builder
+            .with(comp::Combo::default())
     }
 
     fn create_projectile(
@@ -361,7 +361,7 @@ impl StateExt for State {
         vel: comp::Vel,
         body: comp::Body,
         projectile: comp::Projectile,
-    ) -> EcsEntityBuilder {
+    ) -> EcsEntityBuilder<'_> {
         let mut projectile_base = self
             .ecs_mut()
             .create_entity_synced()
@@ -388,7 +388,7 @@ impl StateExt for State {
         properties: comp::shockwave::Properties,
         pos: comp::Pos,
         ori: comp::Ori,
-    ) -> EcsEntityBuilder {
+    ) -> EcsEntityBuilder<'_> {
         self.ecs_mut()
             .create_entity_synced()
             .with(pos)
@@ -402,7 +402,7 @@ impl StateExt for State {
             })
     }
 
-    fn create_safezone(&mut self, range: Option<f32>, pos: comp::Pos) -> EcsEntityBuilder {
+    fn create_safezone(&mut self, range: Option<f32>, pos: comp::Pos) -> EcsEntityBuilder<'_> {
         use comp::{
             aura::{Aura, AuraKind, AuraTarget, Auras},
             buff::{BuffCategory, BuffData, BuffKind, BuffSource},
@@ -431,7 +431,7 @@ impl StateExt for State {
         pos: comp::Pos,
         object: comp::object::Body,
         wiring_element: wiring::WiringElement,
-    ) -> EcsEntityBuilder {
+    ) -> EcsEntityBuilder<'_> {
         self.ecs_mut()
             .create_entity_synced()
             .with(pos)
@@ -464,7 +464,7 @@ impl StateExt for State {
         view_distance: u32,
         world: &std::sync::Arc<world::World>,
         index: &world::IndexOwned,
-    ) -> EcsEntityBuilder {
+    ) -> EcsEntityBuilder<'_> {
         use common::{terrain::TerrainChunkSize, vol::RectVolSize};
         use std::sync::Arc;
         // Request chunks
@@ -508,7 +508,7 @@ impl StateExt for State {
             ))
     }
 
-    fn create_teleporter(&mut self, pos: comp::Pos, portal: PortalData) -> EcsEntityBuilder {
+    fn create_teleporter(&mut self, pos: comp::Pos, portal: PortalData) -> EcsEntityBuilder<'_> {
         self.create_object(pos, object::Body::Portal)
             .with(comp::Immovable)
             .with(comp::Object::from(portal))
@@ -679,7 +679,7 @@ impl StateExt for State {
                     pets.len(),
                     player_pos
                 );
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
 
                 for (pet, body, stats) in pets {
                     let ori = comp::Ori::from(Dir::random_2d(&mut rng));
@@ -1149,7 +1149,7 @@ impl StateExt for State {
             .get(entity)
             .copied()
         {
-            Some(Actor::Npc(rtsim_entity.0))
+            Some(Actor::Npc(rtsim_entity))
         } else if let Some(PresenceKind::Character(character)) = self
             .ecs()
             .read_storage::<Presence>()

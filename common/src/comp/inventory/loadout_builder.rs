@@ -1,5 +1,5 @@
 use crate::{
-    assets::{self, AssetExt},
+    assets::{self, AssetExt, Ron},
     calendar::{Calendar, CalendarEvent},
     comp::{
         Body, arthropod, biped_large, biped_small, bird_large, bird_medium, crustacean, golem,
@@ -14,7 +14,7 @@ use crate::{
     resources::{Time, TimeOfDay},
     trade::SiteInformation,
 };
-use rand::{self, Rng, distributions::WeightedError, seq::SliceRandom};
+use rand::{self, Rng, prelude::IndexedRandom, seq::WeightError};
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 use tracing::warn;
@@ -25,8 +25,8 @@ type Weight = u8;
 pub enum SpecError {
     LoadoutAssetError(assets::Error),
     ItemAssetError(assets::Error),
-    ItemChoiceError(WeightedError),
-    BaseChoiceError(WeightedError),
+    ItemChoiceError(WeightError),
+    BaseChoiceError(WeightError),
     ModularWeaponCreationError(item::modular::ModularWeaponCreationError),
 }
 
@@ -103,7 +103,7 @@ impl ItemSpec {
     // Check if ItemSpec is valid and can be turned into Item
     #[cfg(test)]
     fn validate(&self) -> Result<(), ValidationError> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         match self {
             ItemSpec::Item(item_asset) => Item::new_from_asset(item_asset)
                 .map(drop)
@@ -203,9 +203,9 @@ impl Base {
     // it may be so.
     fn to_spec(&self, rng: &mut impl Rng) -> Result<LoadoutSpec, SpecError> {
         match self {
-            Base::Asset(asset_specifier) => {
-                LoadoutSpec::load_cloned(asset_specifier).map_err(SpecError::LoadoutAssetError)
-            },
+            Base::Asset(asset_specifier) => Ok(Ron::load_cloned(asset_specifier)
+                .map_err(SpecError::LoadoutAssetError)?
+                .into_inner()),
             Base::Combine(bases) => {
                 let bases = bases.iter().map(|b| b.to_spec(rng)?.eval(rng));
                 // Get first base of combined
@@ -377,8 +377,9 @@ impl LoadoutSpec {
             match base {
                 Base::Asset(asset) => {
                     // read the spec
-                    let based = LoadoutSpec::load_cloned(asset)
-                        .map_err(ValidationError::LoadoutAssetError)?;
+                    let based: LoadoutSpec = Ron::load_cloned(asset)
+                        .map_err(ValidationError::LoadoutAssetError)?
+                        .into_inner();
 
                     // expand history
                     history.push(asset.to_owned());
@@ -500,12 +501,6 @@ impl LoadoutSpec {
 
         Ok(())
     }
-}
-
-impl assets::Asset for LoadoutSpec {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
 }
 
 #[must_use]
@@ -1143,7 +1138,7 @@ impl LoadoutBuilder {
 
     #[must_use = "Method consumes builder and returns updated builder."]
     pub fn with_preset(mut self, preset: Preset) -> Self {
-        let rng = &mut rand::thread_rng();
+        let rng = &mut rand::rng();
         match preset {
             Preset::HuskSummon => {
                 self = self.with_asset_expect("common.loadout.dungeon.cultist.husk", rng, None);
@@ -1309,8 +1304,9 @@ impl LoadoutBuilder {
         rng: &mut impl Rng,
         time: Option<&(TimeOfDay, Calendar)>,
     ) -> Result<Self, SpecError> {
-        let spec =
-            LoadoutSpec::load_cloned(asset_specifier).map_err(SpecError::LoadoutAssetError)?;
+        let spec: LoadoutSpec = Ron::load_cloned(asset_specifier)
+            .map_err(SpecError::LoadoutAssetError)?
+            .into_inner();
         self.with_loadout_spec(spec, rng, time)
     }
 
@@ -1336,7 +1332,7 @@ impl LoadoutBuilder {
     /// updates, but should be safe defaults for a new character.
     #[must_use = "Method consumes builder and returns updated builder."]
     pub fn defaults(self) -> Self {
-        let rng = &mut rand::thread_rng();
+        let rng = &mut rand::rng();
         self.with_asset_expect("common.loadout.default", rng, None)
     }
 
@@ -1471,11 +1467,12 @@ mod tests {
     // One for asset itself and second if it serves as a base for other asset.
     #[test]
     fn validate_all_loadout_assets() {
-        let loadouts = assets::load_rec_dir::<LoadoutSpec>("common.loadout")
+        let loadouts = assets::load_rec_dir::<Ron<LoadoutSpec>>("common.loadout")
             .expect("failed to load loadout directory");
         for loadout_id in loadouts.read().ids() {
-            let loadout =
-                LoadoutSpec::load_cloned(loadout_id).expect("failed to load loadout asset");
+            let loadout: LoadoutSpec = Ron::load_cloned(loadout_id)
+                .expect("failed to load loadout asset")
+                .into_inner();
             loadout
                 .validate(vec![loadout_id.to_string()])
                 .unwrap_or_else(|e| panic!("{loadout_id} is broken: {e:?}"));
@@ -1485,12 +1482,13 @@ mod tests {
     // Basically test that our validation tests don't have false-positives
     #[test]
     fn test_valid_assets() {
-        let loadouts = assets::load_rec_dir::<LoadoutSpec>("test.loadout.ok")
+        let loadouts = assets::load_rec_dir::<Ron<LoadoutSpec>>("test.loadout.ok")
             .expect("failed to load loadout directory");
 
         for loadout_id in loadouts.read().ids() {
-            let loadout =
-                LoadoutSpec::load_cloned(loadout_id).expect("failed to load loadout asset");
+            let loadout: LoadoutSpec = Ron::load_cloned(loadout_id)
+                .expect("failed to load loadout asset")
+                .into_inner();
             loadout
                 .validate(vec![loadout_id.to_string()])
                 .unwrap_or_else(|e| panic!("{loadout_id} is broken: {e:?}"));

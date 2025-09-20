@@ -2,7 +2,7 @@ use common::{
     calendar::Calendar,
     generation::ChunkSupplement,
     resources::TimeOfDay,
-    rtsim::ChunkResource,
+    rtsim::TerrainResource,
     terrain::{
         Block, BlockKind, MapSizeLg, SpriteKind, TerrainChunk, TerrainChunkMeta, TerrainChunkSize,
     },
@@ -34,7 +34,7 @@ impl IndexOwned {
         None
     }
 
-    pub fn as_index_ref(&self) -> IndexRef { IndexRef(self) }
+    pub fn as_index_ref(&self) -> IndexRef<'_> { IndexRef(self) }
 }
 
 impl World {
@@ -51,7 +51,7 @@ impl World {
         &self,
         _index: IndexRef,
         chunk_pos: Vec2<i32>,
-        _rtsim_resources: Option<EnumMap<ChunkResource, f32>>,
+        _rtsim_resources: Option<EnumMap<TerrainResource, f32>>,
         // TODO: misleading name
         mut _should_continue: impl FnMut() -> bool,
         _time: Option<(TimeOfDay, Calendar)>,
@@ -62,13 +62,13 @@ impl World {
             y[2], y[3], x[0], x[1], x[2], x[3], y[0], y[1], y[2], y[3], x[0], x[1], x[2], x[3],
             y[0], y[1], y[2], y[3],
         ]);
-        let height = rng.gen::<i32>() % 8;
+        let height = rng.random::<i32>() % 8;
 
         let supplement = ChunkSupplement::default();
 
         Ok((
             TerrainChunk::new(
-                if rng.gen::<u8>() < 64 { height } else { 0 },
+                if rng.random::<u8>() < 64 { height } else { 0 },
                 Block::new(BlockKind::Grass, Rgb::new(11, 102, 35)),
                 Block::air(SpriteKind::Empty),
                 TerrainChunkMeta::void(),

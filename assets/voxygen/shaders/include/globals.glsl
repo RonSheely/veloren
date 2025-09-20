@@ -34,13 +34,6 @@ layout(std140, set = 0, binding = 0) uniform u_globals {
     float globals_dummy; // Fix alignment.
 };
 
-// Specifies the pattern used in the player dithering
-mat4 threshold_matrix = mat4(
-    vec4(1.0 / 17.0,  9.0 / 17.0,  3.0 / 17.0, 11.0 / 17.0),
-    vec4(13.0 / 17.0,  5.0 / 17.0, 15.0 / 17.0,  7.0 / 17.0),
-    vec4(4.0 / 17.0, 12.0 / 17.0,  2.0 / 17.0, 10.0 / 17.0),
-    vec4(16.0 / 17.0,  8.0 / 17.0, 14.0 / 17.0,  6.0 / 17.0)
-);
 float distance_divider = 2;
 float shadow_dithering = 0.5;
 
@@ -59,18 +52,17 @@ float tick_loop(float period) {
     return tick_loop(period, 1.0, 0.0);
 }
 
-
-vec4 tick_loop4(float period, vec4 scale, vec4 offset) {
-    vec4 loop = tick_overflow * scale;
-    vec4 rem = mod(loop, period);
-    vec4 rest = rem * tick.y;
+vec3 tick_loop(float period, vec3 scale, vec3 offset) {
+    vec3 loop = tick_overflow * scale;
+    vec3 rem = mod(loop, period);
+    vec3 rest = rem * tick.y;
 
     return mod(rest + tick.x * scale + offset, period);
 }
 
 // Only works if t happened within tick_overflow
 float time_since(float t) {
-    return tick.x < t ? (tick_overflow - t + tick.x) : (tick.x - t); 
+    return tick.x < t ? (tick_overflow - t + tick.x) : (tick.x - t);
 }
 
 #endif

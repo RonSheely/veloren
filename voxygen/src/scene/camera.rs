@@ -16,15 +16,12 @@ const CLIPPING_MODE_RANGE: Range<f32> = 2.0..20.0;
 pub const MIN_ZOOM: f32 = 0.1;
 
 // Possible TODO: Add more modes
-#[derive(PartialEq, Debug, Clone, Copy, Eq, Hash)]
+#[derive(PartialEq, Debug, Clone, Copy, Eq, Hash, Default)]
 pub enum CameraMode {
     FirstPerson = 0,
+    #[default]
     ThirdPerson = 1,
     Freefly = 2,
-}
-
-impl Default for CameraMode {
-    fn default() -> Self { Self::ThirdPerson }
 }
 
 #[derive(Clone, Copy)]
@@ -626,14 +623,6 @@ impl Camera {
             self.focus.z = lerped_focus.z;
         }
 
-        let lerp_angle = |a: f32, b: f32, rate: f32| {
-            let offs = [-2.0 * PI, 0.0, 2.0 * PI]
-                .iter()
-                .min_by_key(|offs: &&f32| ((a - (b + *offs)).abs() * 1000.0) as i32)
-                .unwrap();
-            Lerp::lerp(a, b + *offs, rate)
-        };
-
         let ori = if smoothing_enabled {
             Vec3::new(
                 lerp_angle(self.ori.x, self.tgt_ori.x, LERP_ORI_RATE * dt),
@@ -644,6 +633,15 @@ impl Camera {
             self.tgt_ori
         };
         self.ori = clamp_and_modulate(ori);
+    }
+
+    pub fn lerp_toward(&mut self, tgt_ori: Vec3<f32>, dt: f32, rate: f32) {
+        self.ori = Vec3::new(
+            lerp_angle(self.ori.x, tgt_ori.x, rate * dt),
+            Lerp::lerp(self.ori.y, tgt_ori.y, rate * dt),
+            lerp_angle(self.ori.z, tgt_ori.z, rate * dt),
+        );
+        self.tgt_ori = self.ori;
     }
 
     pub fn interp_time(&self) -> f32 {
@@ -664,6 +662,12 @@ impl Camera {
     pub fn force_focus_pos(&mut self, focus: Vec3<f32>) {
         self.tgt_focus = focus;
         self.focus = focus;
+    }
+
+    /// Set the focus position of the camera, without lerping.
+    pub fn force_xy_focus_pos(&mut self, focus: Vec3<f32>) {
+        self.tgt_focus = focus;
+        self.focus = focus.xy().with_z(self.focus.z);
     }
 
     /// Get the aspect ratio of the camera.
@@ -778,4 +782,12 @@ impl Camera {
         let focus_off = self.get_focus_pos().map(f32::trunc);
         self.dependents().cam_pos + focus_off
     }
+}
+
+fn lerp_angle(a: f32, b: f32, rate: f32) -> f32 {
+    let offs = [-2.0 * PI, 0.0, 2.0 * PI]
+        .iter()
+        .min_by_key(|offs: &&f32| ((a - (b + *offs)).abs() * 1000.0) as i32)
+        .unwrap();
+    Lerp::lerp(a, b + *offs, rate)
 }

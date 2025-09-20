@@ -894,7 +894,7 @@ impl Widget for Chat<'_> {
             });
             if let Some(msg) = msg.strip_prefix(chat_settings.chat_cmd_prefix) {
                 match parse_cmd(msg) {
-                    Ok((name, args)) => events.push(Event::SendCommand(name, args)),
+                    Ok((name, args)) => events.push(Event::SendCommand(name.to_owned(), args)),
                     // TODO: Localise
                     Err(err) => self
                         .new_messages
@@ -1013,10 +1013,10 @@ fn render_chat_line(chat_type: &ChatType<String>, imgs: &Imgs) -> (Color, conrod
     }
 }
 
-fn parse_cmd(msg: &str) -> Result<(String, Vec<String>), String> {
-    use chumsky::prelude::*;
+fn parse_cmd(msg: &str) -> Result<(&str, Vec<String>), String> {
+    use chumsky::{extra::Err, prelude::*, text::unicode::ident};
 
-    let escape = just::<_, _, Simple<char>>('\\').ignore_then(
+    let escape = just::<_, _, Err<Simple<char>>>('\\').ignore_then(
         just('\\')
             .or(just('/'))
             .or(just('"'))
@@ -1027,23 +1027,26 @@ fn parse_cmd(msg: &str) -> Result<(String, Vec<String>), String> {
             .or(just('t').to('\t')),
     );
 
-    let string = just('"')
-        .ignore_then(filter(|c| *c != '\\' && *c != '"').or(escape).repeated())
-        .then_ignore(just('"'))
+    let string = any()
+        .filter(|c| *c != '\\' && *c != '"')
+        .or(escape)
+        .repeated()
+        .collect::<String>()
+        .delimited_by(just('"'), just('"'))
         .labelled("quoted argument");
 
-    let arg = string
-        .or(filter(|c: &char| !c.is_whitespace() && *c != '"')
-            .repeated()
-            .at_least(1)
-            .labelled("argument"))
-        .collect::<String>();
+    let arg = string.or(any()
+        .filter(|c: &char| !c.is_whitespace() && *c != '"')
+        .repeated()
+        .at_least(1)
+        .collect::<String>()
+        .labelled("argument"));
 
-    let cmd = text::ident()
-        .then(arg.padded().repeated())
+    let cmd = ident()
+        .then(arg.padded().repeated().collect::<Vec<String>>())
         .then_ignore(end());
 
-    cmd.parse(msg).map_err(|errs| {
+    cmd.parse(msg).into_result().map_err(|errs| {
         errs.into_iter()
             .map(|err| err.to_string())
             .collect::<Vec<_>>()
@@ -1060,32 +1063,28 @@ fn change_chat_mode(
     chat_settings: &ChatSettings,
 ) {
     if let Some(msg) = message.strip_prefix(chat_settings.chat_cmd_prefix) {
-        match parse_cmd(msg.trim()) {
-            Ok((name, args)) => {
-                #[expect(clippy::collapsible_match)]
-                if let Ok(command) = name.parse::<ServerChatCommand>() {
-                    match command {
-                        ServerChatCommand::Group
-                        | ServerChatCommand::Say
-                        | ServerChatCommand::Faction
-                        | ServerChatCommand::Region
-                        | ServerChatCommand::World => {
-                            // Only remove the command if there is no message
-                            if args.is_empty() {
-                                // We found a match to a command so clear the input
-                                // message
-                                state.update(|s| s.input.message.clear());
-                                events.push(Event::SendCommand(name, args))
-                            }
-                        },
-                        // TODO: Add support for Whispers (might need to adjust widget
-                        // for this.)
-                        _ => (),
+        // Do nothing on Err because we are just completing the Chat Mode
+        if let Ok((name, args)) = parse_cmd(msg.trim())
+            && let Ok(command) = name.parse::<ServerChatCommand>()
+        {
+            match command {
+                ServerChatCommand::Group
+                | ServerChatCommand::Say
+                | ServerChatCommand::Faction
+                | ServerChatCommand::Region
+                | ServerChatCommand::World => {
+                    // Only remove the command if there is no message
+                    if args.is_empty() {
+                        // We found a match to a command so clear the input
+                        // message
+                        state.update(|s| s.input.message.clear());
+                        events.push(Event::SendCommand(name.to_owned(), args))
                     }
-                }
-            },
-            // Do nothing because we are just completing the Chat Mode
-            Err(_) => (),
+                },
+                // TODO: Add support for Whispers (might need to adjust widget
+                // for this.)
+                _ => (),
+            }
         }
     }
 }
@@ -1096,24 +1095,22 @@ mod tests {
 
     #[test]
     fn parse_cmds() {
-        let expected: Result<(String, Vec<String>), String> = Ok(("help".to_string(), vec![]));
+        let expected: Result<(&str, Vec<String>), String> = Ok(("help", vec![]));
         assert_eq!(parse_cmd(r"help"), expected);
 
-        let expected: Result<(String, Vec<String>), String> = Ok(("say".to_string(), vec![
-            "foo".to_string(),
-            "bar".to_string(),
-        ]));
+        let expected: Result<(&str, Vec<String>), String> =
+            Ok(("say", vec!["foo".to_string(), "bar".to_string()]));
         assert_eq!(parse_cmd(r"say foo bar"), expected);
         assert_eq!(parse_cmd(r#"say "foo" "bar""#), expected);
 
-        let expected: Result<(String, Vec<String>), String> =
-            Ok(("say".to_string(), vec!["Hello World".to_string()]));
+        let expected: Result<(&str, Vec<String>), String> =
+            Ok(("say", vec!["Hello World".to_string()]));
         assert_eq!(parse_cmd(r#"say "Hello World""#), expected);
 
         // Note: \n in the expected gets expanded by rust to a newline character, that's
         // why we must not use a raw string in the expected
-        let expected: Result<(String, Vec<String>), String> =
-            Ok(("say".to_string(), vec!["Hello\nWorld".to_string()]));
+        let expected: Result<(&str, Vec<String>), String> =
+            Ok(("say", vec!["Hello\nWorld".to_string()]));
         assert_eq!(parse_cmd(r#"say "Hello\nWorld""#), expected);
     }
 }

@@ -27,7 +27,6 @@ impl Animation for WieldAnimation {
     const UPDATE_FN: &'static [u8] = b"biped_small_wield\0";
 
     #[cfg_attr(feature = "be-dyn-lib", unsafe(export_name = "biped_small_wield"))]
-
     fn update_skeleton_inner(
         skeleton: &Self::Skeleton,
         (
@@ -164,10 +163,10 @@ impl Animation for WieldAnimation {
                     * Quaternion::rotation_y(-0.2 * speednorm)
                     * Quaternion::rotation_z(-0.3);
 
-                if let Some(AbilitySpec::Custom(spec)) = active_tool_spec {
-                    if spec.as_str() == "Ashen Axe" {
-                        next.main.position += Vec3::new(-4.0, -2.5, 0.0);
-                    }
+                if let Some(AbilitySpec::Custom(spec)) = active_tool_spec
+                    && spec.as_str() == "Ashen Axe"
+                {
+                    next.main.position += Vec3::new(-4.0, -2.5, 0.0);
                 }
             },
             Some(ToolKind::Dagger | ToolKind::Sword) => {

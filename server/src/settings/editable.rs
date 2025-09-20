@@ -103,7 +103,13 @@ pub trait EditableSetting: Clone + Default {
             match ron::de::from_reader(&mut file)
                 .map(|setting: Self::Setting| setting.try_into())
                 .or_else(|orig_err| {
-                    file.rewind()?;
+                    file.rewind().map_err(|e| ron::error::SpannedError {
+                        code: e.into(),
+                        span: ron::error::Span {
+                            start: ron::error::Position { line: 0, col: 0 },
+                            end: ron::error::Position { line: 0, col: 0 },
+                        },
+                    })?;
                     ron::de::from_reader(file)
                          .map(|legacy| Ok((Version::Old, Self::Legacy::into(legacy))))
                          // When both legacy and non-legacy have parse errors, prioritize the
@@ -251,10 +257,10 @@ fn save_to_file<S: EditableSetting>(setting: S, path: &Path) -> Result<S, ErrorI
     // the file.
     let (_, settings): (Version, S) = raw.try_into().map_err(ErrorInternal::Integrity)?;
     // Create dir if it doesn't exist
-    if let Some(dir) = path.parent() {
-        if let Err(err) = fs::create_dir_all(dir) {
-            return Err(ErrorInternal::Io(err, settings));
-        }
+    if let Some(dir) = path.parent()
+        && let Err(err) = fs::create_dir_all(dir)
+    {
+        return Err(ErrorInternal::Io(err, settings));
     }
     // Atomically write the validated string to the settings file.
     let atomic_file = AtomicFile::new(path, OverwriteBehavior::AllowOverwrite);

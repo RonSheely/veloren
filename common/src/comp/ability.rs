@@ -1,5 +1,4 @@
 use crate::{
-    assets::{self, Asset},
     combat::{self, CombatEffect, DamageKind, Knockback},
     comp::{
         self, Body, CharacterState, LightEmitter, StateUpdate, aura, beam, buff,
@@ -153,7 +152,7 @@ impl ActiveAbilities {
         &self,
         inv: Option<&Inventory>,
         skill_set: Option<&SkillSet>,
-    ) -> Cow<Vec<AuxiliaryAbility>> {
+    ) -> Cow<'_, Vec<AuxiliaryAbility>> {
         let aux_key = Self::active_auxiliary_key(inv);
 
         self.auxiliary_sets
@@ -1286,12 +1285,6 @@ impl Default for CharacterAbility {
     }
 }
 
-impl Asset for CharacterAbility {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
-}
-
 impl CharacterAbility {
     /// Attempts to fulfill requirements, mutating `update` (taking energy) if
     /// applicable.
@@ -2277,15 +2270,14 @@ impl CharacterAbility {
             recover_duration,
             ..
         } = self
+            && let Ok(level) = skillset.skill_level(Skill::Pick(Speed))
         {
-            if let Ok(level) = skillset.skill_level(Skill::Pick(Speed)) {
-                let modifiers = SKILL_MODIFIERS.mining_tree;
+            let modifiers = SKILL_MODIFIERS.mining_tree;
 
-                let speed = modifiers.speed.powi(level.into());
-                *buildup_duration /= speed;
-                *swing_duration /= speed;
-                *recover_duration /= speed;
-            }
+            let speed = modifiers.speed.powi(level.into());
+            *buildup_duration /= speed;
+            *swing_duration /= speed;
+            *recover_duration /= speed;
         }
     }
 
@@ -3619,8 +3611,11 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord, Default,
+)]
 pub enum Stance {
+    #[default]
     None,
     Sword(SwordStance),
 }
@@ -3652,10 +3647,6 @@ pub enum AbilityInitEvent {
         strength: f32,
         duration: Option<Secs>,
     },
-}
-
-impl Default for Stance {
-    fn default() -> Self { Self::None }
 }
 
 impl Component for Stance {

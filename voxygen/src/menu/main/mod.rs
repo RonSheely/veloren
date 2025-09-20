@@ -209,10 +209,9 @@ impl PlayState for MainMenuState {
                 continue;
             }
 
-            match event {
-                Event::Close => return PlayStateResult::Shutdown,
-                // Ignore all other events.
-                _ => {},
+            // Shutdown on Close, ignore all other events.
+            if matches!(event, Event::Close) {
+                return PlayStateResult::Shutdown;
             }
         }
 
@@ -647,6 +646,7 @@ pub(crate) fn get_client_msg_error(
         Error::NetworkErr(e) => net_error(e.to_string(), mismatched_server_info),
         Error::ParticipantErr(e) => net_error(e.to_string(), mismatched_server_info),
         Error::StreamErr(e) => net_error(e.to_string(), mismatched_server_info),
+        Error::RustlsErr(e) => net_error(e.to_string(), mismatched_server_info),
         Error::HostnameLookupFailed(e) => {
             format!(
                 "{}: {}",

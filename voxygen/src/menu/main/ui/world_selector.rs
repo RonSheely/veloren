@@ -71,7 +71,7 @@ impl Screen {
         worlds: &crate::singleplayer::SingleplayerWorlds,
         i18n: &Localization,
         button_style: style::button::Style,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         let input_text_size = fonts.cyri.scale(INPUT_TEXT_SIZE);
 
         let worlds_count = worlds.worlds.len();
@@ -274,7 +274,7 @@ impl Screen {
                         i18n.get_msg("main-singleplayer-random_seed"),
                         FILL_FRAC_TWO,
                         button_style,
-                        Some(message(WorldChange::Seed(rand::thread_rng().gen()))),
+                        Some(message(WorldChange::Seed(rand::rng().random()))),
                     ))
                     .max_width(200)
                     .into(),

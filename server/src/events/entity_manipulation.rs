@@ -20,7 +20,7 @@ use crate::{
 use common::rtsim::{Actor, RtSimEntity};
 use common::{
     CachedSpatialGrid, Damage, DamageKind, DamageSource, GroupTarget, RadiusEffect,
-    assets::AssetExt,
+    assets::{AssetExt, Ron},
     combat::{
         self, AttackSource, BASE_PARRIED_POISE_PUNISHMENT, DamageContributor, DeathEffect,
         DeathEffects,
@@ -188,7 +188,7 @@ pub fn entity_as_actor(
     presences: &ReadStorage<Presence>,
 ) -> Option<Actor> {
     if let Some(rtsim_entity) = rtsim_entities.get(entity).copied() {
-        Some(Actor::Npc(rtsim_entity.0))
+        Some(Actor::Npc(rtsim_entity))
     } else if let Some(PresenceKind::Character(character)) = presences.get(entity).map(|p| p.kind) {
         Some(Actor::Character(character))
     } else {
@@ -225,7 +225,7 @@ impl ServerEvent for HealthChangeEvent {
 
     fn handle(events: impl ExactSizeIterator<Item = Self>, mut data: Self::SystemData<'_>) {
         let mut emitters = data.events.get_emitters();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         for ev in events {
             if let Some((mut health, pos, uid, heads)) = (
                 &mut data.healths,
@@ -279,20 +279,20 @@ impl ServerEvent for HealthChangeEvent {
                     }
                 }
 
-                if let (Some(pos), Some(uid)) = (pos, uid) {
-                    if changed {
-                        emitters.emit(Outcome::HealthChange {
-                            pos: pos.0,
-                            info: HealthChangeInfo {
-                                amount: ev.change.amount,
-                                by: ev.change.by,
-                                target: *uid,
-                                cause: ev.change.cause,
-                                precise: ev.change.precise,
-                                instance: ev.change.instance,
-                            },
-                        });
-                    }
+                if let (Some(pos), Some(uid)) = (pos, uid)
+                    && changed
+                {
+                    emitters.emit(Outcome::HealthChange {
+                        pos: pos.0,
+                        info: HealthChangeInfo {
+                            amount: ev.change.amount,
+                            by: ev.change.by,
+                            target: *uid,
+                            cause: ev.change.cause,
+                            precise: ev.change.precise,
+                            instance: ev.change.instance,
+                        },
+                    });
                 }
 
                 if !health.is_dead && health.should_die() {
@@ -310,10 +310,10 @@ impl ServerEvent for HealthChangeEvent {
             // This if statement filters out anything under 5 damage, for DOT ticks
             // TODO: Find a better way to separate direct damage from DOT here
             let damage = -ev.change.amount;
-            if damage > 5.0 {
-                if let Some(agent) = data.agents.get_mut(ev.entity) {
-                    agent.inbox.push_back(AgentEvent::Hurt);
-                }
+            if damage > 5.0
+                && let Some(agent) = data.agents.get_mut(ev.entity)
+            {
+                agent.inbox.push_back(AgentEvent::Hurt);
             }
         }
     }
@@ -700,7 +700,7 @@ impl ServerEvent for DestroyEvent {
                             transform_emitter.emit(TransformEvent {
                                 target_entity: killed_uid,
                                 entity_info: {
-                                    let Ok(entity_config) = EntityConfig::load(entity_spec)
+                                    let Ok(entity_config) = Ron::<EntityConfig>::load(entity_spec)
                                         .inspect_err(|error| {
                                             error!(
                                                 ?entity_spec,
@@ -720,9 +720,9 @@ impl ServerEvent for DestroyEvent {
                                             .unwrap_or_default(),
                                     )
                                     .with_entity_config(
-                                        entity_config.read().clone(),
+                                        entity_config.read().clone().into_inner(),
                                         Some(entity_spec),
-                                        &mut rand::thread_rng(),
+                                        &mut rand::rng(),
                                         None,
                                     )
                                 },
@@ -1004,7 +1004,7 @@ impl ServerEvent for DestroyEvent {
                         let mut item_offset_spiral =
                             Spiral2d::new().map(|offset| offset.as_::<f32>() * 0.5);
 
-                        let mut rng = rand::thread_rng();
+                        let mut rng = rand::rng();
                         let mut spawn_item = |item, loot_owner| {
                             let offset = item_offset_spiral.next().unwrap_or_default();
                             create_item_drop.emit(CreateItemDropEvent {
@@ -1032,7 +1032,7 @@ impl ServerEvent for DestroyEvent {
                                 spawn_item(item, None)
                             }
                         } else {
-                            let mut rng = rand::thread_rng();
+                            let mut rng = rand::rng();
                             distribute_many(
                                 item_receivers
                                     .iter()
@@ -1061,13 +1061,10 @@ impl ServerEvent for DestroyEvent {
                         .is_some_and(|our_pos| {
                             let our_pos = our_pos.0.map(|i| i as i32);
 
-                            let is_in_area = data
-                                .areas_container
+                            data.areas_container
                                 .areas()
                                 .iter()
-                                .any(|(_, area)| area.contains_point(our_pos));
-
-                            is_in_area
+                                .any(|(_, area)| area.contains_point(our_pos))
                         });
 
                 // Modify durability on all equipped items
@@ -1322,7 +1319,7 @@ impl ServerEvent for ExplosionEvent {
         let mut outcome_emitter = data.outcomes.emitter();
 
         // TODO: Faster RNG?
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for ev in events {
             let owner_entity = ev.owner.and_then(|uid| data.id_maps.uid_entity(uid));
@@ -1422,16 +1419,16 @@ impl ServerEvent for ExplosionEvent {
                         let color_range = power * 2.7;
                         for _ in 0..RAYS {
                             let dir = Vec3::new(
-                                rng.gen::<f32>() - 0.5,
-                                rng.gen::<f32>() - 0.5,
-                                rng.gen::<f32>() - 0.5,
+                                rng.random::<f32>() - 0.5,
+                                rng.random::<f32>() - 0.5,
+                                rng.random::<f32>() - 0.5,
                             )
                             .normalized();
 
                             let _ = data
                                 .terrain
                                 .ray(ev.pos, ev.pos + dir * color_range)
-                                .until(|_| rng.gen::<f32>() < 0.05)
+                                .until(|_| rng.random::<f32>() < 0.05)
                                 .for_each(|_: &Block, pos| touched_blocks.push(pos))
                                 .cast();
                         }
@@ -1485,9 +1482,9 @@ impl ServerEvent for ExplosionEvent {
                         // Destroy terrain
                         for _ in 0..RAYS {
                             let dir = Vec3::new(
-                                rng.gen::<f32>() - 0.5,
-                                rng.gen::<f32>() - 0.5,
-                                rng.gen::<f32>() - 0.15,
+                                rng.random::<f32>() - 0.5,
+                                rng.random::<f32>() - 0.5,
+                                rng.random::<f32>() - 0.15,
                             )
                             .normalized();
 
@@ -1500,7 +1497,7 @@ impl ServerEvent for ExplosionEvent {
                                 .ray(from, to)
                                 .while_(|block: &Block| {
                                     ray_energy -= block.explode_power().unwrap_or(0.0)
-                                        + rng.gen::<f32>() * 0.1;
+                                        + rng.random::<f32>() * 0.1;
 
                                     // Stop if:
                                     // 1) Block is liquid
@@ -1564,8 +1561,8 @@ impl ServerEvent for ExplosionEvent {
                             .0;
                         let max_phi = (height / radius).atan();
                         for _ in 0..(RAY_DENSITY * radius.powi(2)) as usize {
-                            let phi = rng.gen_range(-PI / 2.0..-max_phi);
-                            let theta = rng.gen_range(0.0..2.0 * PI);
+                            let phi = rng.random_range(-PI / 2.0..-max_phi);
+                            let theta = rng.random_range(0.0..2.0 * PI);
                             let ray = Vec3::new(
                                 RAY_LENGTH * phi.cos() * theta.cos(),
                                 RAY_LENGTH * phi.cos() * theta.sin(),
@@ -1600,10 +1597,11 @@ impl ServerEvent for ExplosionEvent {
                                                 Block::new(BlockKind::Lava, Rgb::new(255, 65, 0)),
                                             );
 
-                                            if rng.gen_bool(timeout_chance as f64) {
+                                            if rng.random_bool(timeout_chance as f64) {
                                                 let current_time: f64 = data.time.0;
                                                 let replace_time = current_time
-                                                    + (timeout + rng.gen_range(0.0..timeout_offset))
+                                                    + (timeout
+                                                        + rng.random_range(0.0..timeout_offset))
                                                         as f64;
                                                 data.scheduled_block_change.set(
                                                     block_pos,
@@ -1971,72 +1969,67 @@ impl ServerEvent for BonkEvent {
             } else {
                 use common::terrain::SpriteKind;
                 let pos = ev.pos.map(|e| e.floor() as i32);
-                if let Some(block) = terrain.get(pos).ok().copied().filter(|b| b.is_bonkable()) {
-                    if block_change
+                if let Some(block) = terrain.get(pos).ok().copied().filter(|b| b.is_bonkable())
+                    && block_change
                         .try_set(pos, block.with_sprite(SpriteKind::Empty))
                         .is_some()
-                    {
-                        let sprite_cfg = terrain.sprite_cfg_at(pos);
-                        if let Some(items) = comp::Item::try_reclaim_from_block(block, sprite_cfg) {
-                            let msm = &MaterialStatManifest::load().read();
-                            let ability_map = &AbilityMap::load().read();
-                            for item in flatten_counted_items(&items, ability_map, msm) {
-                                let pos = Pos(pos.map(|e| e as f32) + Vec3::new(0.5, 0.5, 0.0));
-                                let vel = comp::Vel::default();
-                                // TODO: Use the `ItemDrop` body for this.
-                                let body = match block.get_sprite() {
-                                    // Create different containers depending on the original
-                                    // sprite
-                                    Some(SpriteKind::Apple) => comp::object::Body::Apple,
-                                    Some(SpriteKind::Beehive) => comp::object::Body::Hive,
-                                    Some(SpriteKind::Coconut) => comp::object::Body::Coconut,
-                                    Some(SpriteKind::Bomb) => comp::object::Body::Bomb,
-                                    _ => comp::object::Body::Pebble,
-                                };
+                {
+                    let sprite_cfg = terrain.sprite_cfg_at(pos);
+                    if let Some(items) = comp::Item::try_reclaim_from_block(block, sprite_cfg) {
+                        let msm = &MaterialStatManifest::load().read();
+                        let ability_map = &AbilityMap::load().read();
+                        for item in flatten_counted_items(&items, ability_map, msm) {
+                            let pos = Pos(pos.map(|e| e as f32) + Vec3::new(0.5, 0.5, 0.0));
+                            let vel = comp::Vel::default();
+                            // TODO: Use the `ItemDrop` body for this.
+                            let body = match block.get_sprite() {
+                                // Create different containers depending on the original
+                                // sprite
+                                Some(SpriteKind::Apple) => comp::object::Body::Apple,
+                                Some(SpriteKind::Beehive) => comp::object::Body::Hive,
+                                Some(SpriteKind::Coconut) => comp::object::Body::Coconut,
+                                Some(SpriteKind::Bomb) => comp::object::Body::Bomb,
+                                _ => comp::object::Body::Pebble,
+                            };
 
-                                if matches!(block.get_sprite(), Some(SpriteKind::Bomb)) {
-                                    shoot_emitter.emit(ShootEvent {
-                                        entity: None,
-                                        pos,
-                                        dir: Dir::from_unnormalized(vel.0).unwrap_or_default(),
-                                        body: Body::Object(body),
-                                        light: None,
-                                        projectile: ProjectileConstructor {
-                                            kind: ProjectileConstructorKind::Explosive {
-                                                radius: 12.0,
-                                                min_falloff: 0.75,
-                                                reagent: None,
-                                                terrain: Some((4.0, ColorPreset::Black)),
-                                            },
-                                            attack: Some(ProjectileAttack {
-                                                damage: 40.0,
-                                                poise: Some(100.0),
-                                                knockback: None,
-                                                energy: None,
-                                                buff: None,
-                                                friendly_fire: true,
-                                            }),
-                                            scaled: None,
-                                        }
-                                        .create_projectile(None, 1.0, None),
-                                        speed: vel.0.magnitude(),
-                                        object: None,
-                                    });
-                                } else {
-                                    create_object_emitter.emit(CreateObjectEvent {
-                                        pos,
-                                        vel,
-                                        body,
-                                        object: None,
-                                        item: Some(comp::PickupItem::new(
-                                            item,
-                                            *program_time,
-                                            false,
-                                        )),
-                                        light_emitter: None,
-                                        stats: None,
-                                    });
-                                }
+                            if matches!(block.get_sprite(), Some(SpriteKind::Bomb)) {
+                                shoot_emitter.emit(ShootEvent {
+                                    entity: None,
+                                    pos,
+                                    dir: Dir::from_unnormalized(vel.0).unwrap_or_default(),
+                                    body: Body::Object(body),
+                                    light: None,
+                                    projectile: ProjectileConstructor {
+                                        kind: ProjectileConstructorKind::Explosive {
+                                            radius: 12.0,
+                                            min_falloff: 0.75,
+                                            reagent: None,
+                                            terrain: Some((4.0, ColorPreset::Black)),
+                                        },
+                                        attack: Some(ProjectileAttack {
+                                            damage: 40.0,
+                                            poise: Some(100.0),
+                                            knockback: None,
+                                            energy: None,
+                                            buff: None,
+                                            friendly_fire: true,
+                                        }),
+                                        scaled: None,
+                                    }
+                                    .create_projectile(None, 1.0, None),
+                                    speed: vel.0.magnitude(),
+                                    object: None,
+                                });
+                            } else {
+                                create_object_emitter.emit(CreateObjectEvent {
+                                    pos,
+                                    vel,
+                                    body,
+                                    object: None,
+                                    item: Some(comp::PickupItem::new(item, *program_time, false)),
+                                    light_emitter: None,
+                                    stats: None,
+                                });
                             }
                         }
                     }
@@ -2080,13 +2073,13 @@ impl ServerEvent for AuraEvent {
                     }
                 },
                 AuraChange::ExitAura(uid, key, variant) => {
-                    if let Some(mut entered_auras) = entered_auras.get_mut(ev.entity) {
-                        if let Some(entered_auras_variant) = entered_auras.auras.get_mut(&variant) {
-                            entered_auras_variant.remove(&(uid, key));
+                    if let Some(mut entered_auras) = entered_auras.get_mut(ev.entity)
+                        && let Some(entered_auras_variant) = entered_auras.auras.get_mut(&variant)
+                    {
+                        entered_auras_variant.remove(&(uid, key));
 
-                            if entered_auras_variant.is_empty() {
-                                entered_auras.auras.remove(&variant);
-                            }
+                        if entered_auras_variant.is_empty() {
+                            entered_auras.auras.remove(&variant);
                         }
                     }
                 },
@@ -2404,16 +2397,15 @@ impl ServerEvent for TeleportToEvent {
                 .and_then(|e| positions.get(e))
                 .copied();
 
-            if let (Some(pos), Some(target_pos)) = (positions.get_mut(ev.entity), target_pos) {
-                if ev
+            if let (Some(pos), Some(target_pos)) = (positions.get_mut(ev.entity), target_pos)
+                && ev
                     .max_range
                     .is_none_or(|r| pos.0.distance_squared(target_pos.0) < r.powi(2))
-                {
-                    *pos = target_pos;
-                    force_updates
-                        .get_mut(ev.entity)
-                        .map(|force_update| force_update.update());
-                }
+            {
+                *pos = target_pos;
+                force_updates
+                    .get_mut(ev.entity)
+                    .map(|force_update| force_update.update());
             }
         }
     }
@@ -2506,33 +2498,33 @@ impl ServerEvent for EntityAttackedHookEvent {
             });
 
             // If entity was in an active trade, cancel it
-            if let Some(uid) = data.uids.get(ev.entity) {
-                if let Some(trade) = data.trades.entity_trades.get(uid).copied() {
-                    data.trades
-                        .decline_trade(trade, *uid)
-                        .and_then(|uid| data.id_maps.uid_entity(uid))
-                        .map(|entity_b| {
-                            // Notify both parties that the trade ended
-                            let mut notify_trade_party = |entity| {
-                                // TODO: Can probably improve UX here for the user that sent the
-                                // trade invite, since right now it
-                                // may seems like their request was
-                                // purposefully declined, rather than e.g. being interrupted.
-                                if let Some(client) = data.clients.get(entity) {
-                                    client.send_fallible(ServerGeneral::FinishedTrade(
-                                        TradeResult::Declined,
-                                    ));
-                                }
-                                if let Some(agent) = data.agents.get_mut(entity) {
-                                    agent.inbox.push_back(AgentEvent::FinishedTrade(
-                                        TradeResult::Declined,
-                                    ));
-                                }
-                            };
-                            notify_trade_party(ev.entity);
-                            notify_trade_party(entity_b);
-                        });
-                }
+            if let Some(uid) = data.uids.get(ev.entity)
+                && let Some(trade) = data.trades.entity_trades.get(uid).copied()
+            {
+                data.trades
+                    .decline_trade(trade, *uid)
+                    .and_then(|uid| data.id_maps.uid_entity(uid))
+                    .map(|entity_b| {
+                        // Notify both parties that the trade ended
+                        let mut notify_trade_party = |entity| {
+                            // TODO: Can probably improve UX here for the user that sent the
+                            // trade invite, since right now it
+                            // may seems like their request was
+                            // purposefully declined, rather than e.g. being interrupted.
+                            if let Some(client) = data.clients.get(entity) {
+                                client.send_fallible(ServerGeneral::FinishedTrade(
+                                    TradeResult::Declined,
+                                ));
+                            }
+                            if let Some(agent) = data.agents.get_mut(entity) {
+                                agent
+                                    .inbox
+                                    .push_back(AgentEvent::FinishedTrade(TradeResult::Declined));
+                            }
+                        };
+                        notify_trade_party(ev.entity);
+                        notify_trade_party(entity_b);
+                    });
             }
 
             if let Some(stats) = data.stats.get(ev.entity) {

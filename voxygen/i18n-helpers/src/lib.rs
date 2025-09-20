@@ -1,4 +1,3 @@
-#![feature(let_chains)]
 use std::borrow::Cow;
 
 use common::{
@@ -440,7 +439,7 @@ fn insert_alias(_replace_you: bool, info: PlayerInfo, _localization: &Localizati
 mod tests {
     #[expect(unused)] use super::*;
     use common::{
-        assets::AssetExt,
+        assets::{AssetExt, Ron},
         comp::{
             Body, Content,
             inventory::item::{ItemDesc, ItemI18n, all_items_expect},
@@ -530,7 +529,7 @@ mod tests {
         let mut no_names = HashSet::new();
         let mut no_i18n = HashSet::new();
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let localization = LocalizationHandle::load_expect("en").read();
 
         let entity_configs =
@@ -543,7 +542,7 @@ mod tests {
             let event = None;
 
             // evaluate to get template to modify later
-            let entity_config = EntityConfig::load_expect_cloned(&config_asset);
+            let entity_config = Ron::<EntityConfig>::load_expect_cloned(&config_asset).into_inner();
             // evaluate to get random body
             let template_entity = EntityInfo::at(Vec3::zero()).with_entity_config(
                 entity_config.clone(),

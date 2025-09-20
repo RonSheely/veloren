@@ -539,13 +539,15 @@ impl Widget for Group<'_> {
                         // Limit displayed buffs to 11
                         let buff_count = buff_icons.len().min(11);
                         total_buff_count += buff_count;
-                        let gen = &mut ui.widget_id_generator();
+                        let generator = &mut ui.widget_id_generator();
                         if state.ids.buffs.len() < total_buff_count {
-                            state.update(|state| state.ids.buffs.resize(total_buff_count, gen));
+                            state.update(|state| {
+                                state.ids.buffs.resize(total_buff_count, generator)
+                            });
                         }
                         if state.ids.buff_timers.len() < total_buff_count {
                             state.update(|state| {
-                                state.ids.buff_timers.resize(total_buff_count, gen)
+                                state.ids.buff_timers.resize(total_buff_count, generator)
                             });
                         }
                         // Create Buff Widgets
@@ -699,13 +701,12 @@ impl Widget for Group<'_> {
                         .label_font_size(self.fonts.cyri.scale(10))
                         .set(state.ids.btn_leader, ui)
                         .was_clicked()
+                        && let Some(uid) = selected
                     {
-                        if let Some(uid) = selected {
-                            events.push(Event::AssignLeader(uid));
-                            state.update(|s| {
-                                s.selected_member = None;
-                            });
-                        }
+                        events.push(Event::AssignLeader(uid));
+                        state.update(|s| {
+                            s.selected_member = None;
+                        });
                     };
                     if Button::image(self.imgs.button)
                         .w_h(90.0, 22.0)
@@ -738,13 +739,12 @@ impl Widget for Group<'_> {
                         .label_font_size(self.fonts.cyri.scale(10))
                         .set(state.ids.btn_kick, ui)
                         .was_clicked()
+                        && let Some(uid) = selected
                     {
-                        if let Some(uid) = selected {
-                            events.push(Event::Kick(uid));
-                            state.update(|s| {
-                                s.selected_member = None;
-                            });
-                        }
+                        events.push(Event::Kick(uid));
+                        state.update(|s| {
+                            s.selected_member = None;
+                        });
                     };
                 }
                 // Group Members, only character names, cut long names when they exceed the

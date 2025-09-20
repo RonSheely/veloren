@@ -4,13 +4,13 @@ use super::{
     tool::{self, AbilityMap, AbilitySpec, Hands, Tool},
 };
 use crate::{
-    assets::{self, Asset, AssetExt, AssetHandle},
+    assets::{AssetExt, AssetHandle, BoxedError, FileAsset, load_ron},
     recipe,
 };
 use common_base::dev_panic;
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
-use rand::{Rng, prelude::SliceRandom};
+use rand::{Rng, prelude::IndexedRandom};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, sync::Arc};
 
@@ -47,12 +47,12 @@ impl MaterialStatManifest {
     }
 }
 
-// This could be a Compound that also loads the keys, but the RecipeBook
-// Compound impl already does that, so checking for existence here is redundant.
-impl Asset for MaterialStatManifest {
-    type Loader = assets::RonLoader;
-
+// This could be an Asset that also loads the keys, but the RecipeBook
+// Asset impl already does that, so checking for existence here is redundant.
+impl FileAsset for MaterialStatManifest {
     const EXTENSION: &'static str = "ron";
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Result<Self, BoxedError> { load_ron(&bytes) }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -104,7 +104,7 @@ impl ModularBase {
         components: &[Item],
         msm: &MaterialStatManifest,
         durability_multiplier: DurabilityMultiplier,
-    ) -> Cow<ItemKind> {
+    ) -> Cow<'_, ItemKind> {
         let toolkind = components
             .iter()
             .find_map(|comp| match &*comp.kind() {
@@ -140,7 +140,7 @@ impl ModularBase {
     /// Modular weapons are named as "{Material} {Weapon}" where {Weapon} is
     /// from the damage component used and {Material} is from the material
     /// the damage component is created from.
-    pub fn generate_name(&self, components: &[Item]) -> Cow<str> {
+    pub fn generate_name(&self, components: &[Item]) -> Cow<'_, str> {
         match self {
             ModularBase::Tool => {
                 let name = components
@@ -185,7 +185,7 @@ impl ModularBase {
             .fold(Quality::MIN, |a, b| a.max(b.quality()))
     }
 
-    pub fn ability_spec(&self, components: &[Item]) -> Option<Cow<AbilitySpec>> {
+    pub fn ability_spec(&self, components: &[Item]) -> Option<Cow<'_, AbilitySpec>> {
         match self {
             ModularBase::Tool => components.iter().find_map(|comp| match &*comp.kind() {
                 ItemKind::ModularComponent(ModularComponent::ToolPrimaryComponent {

@@ -25,7 +25,7 @@ use common::{
     outcome::Outcome,
     recipe::{self, RecipeBookManifest, default_component_recipe_book, default_repair_recipe_book},
     resources::{ProgramTime, Time},
-    terrain::{Block, SpriteKind, sprite},
+    terrain::{Block, SpriteKind},
     trade::Trades,
     uid::{IdMaps, Uid},
     util::find_dist::{self, FindDist},
@@ -132,7 +132,7 @@ impl ServerEvent for InventoryManipEvent {
                 )
             })
         };
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let mut dropped_items = Vec::new();
 
@@ -362,8 +362,7 @@ impl ServerEvent for InventoryManipEvent {
                     if let Some(block) = block {
                         // If there are items to be reclaimed from the block, add it to the
                         // inventory
-                        let sprite_cfg = data.terrain.sprite_cfg_at(sprite_pos);
-                        if block.is_collectible(sprite_cfg)
+                        if block.is_directly_collectible()
                             && data.block_change.can_set_block(sprite_pos)
                         {
                             // Send event to rtsim if something was stolen.
@@ -390,6 +389,7 @@ impl ServerEvent for InventoryManipEvent {
                                 inventory.take(inv_slot, &data.ability_map, &data.msm);
                             }
 
+                            let sprite_cfg = data.terrain.sprite_cfg_at(sprite_pos);
                             if let Some(items) =
                                 comp::Item::try_reclaim_from_block(block, sprite_cfg)
                             {
@@ -436,17 +436,7 @@ impl ServerEvent for InventoryManipEvent {
                             }
 
                             // We made sure earlier the block was not already modified this tick
-                            match block.get_sprite() {
-                                Some(SpriteKind::Lettuce) => {
-                                    let new_block =
-                                        block.with_attr(sprite::Collectable(false)).expect(
-                                            "Setting collectable will not fail as this scope \
-                                             requires block::is_collectible to return true.",
-                                        );
-                                    data.block_change.set(sprite_pos, new_block)
-                                },
-                                _ => data.block_change.set(sprite_pos, block.into_vacant()),
-                            }
+                            data.block_change.set(sprite_pos, block.into_collected());
 
                             // If the block was a keyhole, remove nearby door blocks
                             // TODO: Abstract this code into a generalised way to do block updates?
@@ -855,14 +845,11 @@ impl ServerEvent for InventoryManipEvent {
                         Slot::Inventory(source_inv_slot_id),
                         Slot::Inventory(target_inv_slot_id),
                     ) = (slot, target)
+                        && let Some(source_item) = inventory.get(source_inv_slot_id)
+                        && let Some(target_item) = inventory.get(target_inv_slot_id)
+                        && source_item != target_item
                     {
-                        if let Some(source_item) = inventory.get(source_inv_slot_id) {
-                            if let Some(target_item) = inventory.get(target_inv_slot_id) {
-                                if source_item != target_item {
-                                    continue;
-                                }
-                            }
-                        }
+                        continue;
                     }
 
                     let item = match slot {
@@ -873,10 +860,10 @@ impl ServerEvent for InventoryManipEvent {
                         Slot::Overflow(_) => None,
                     };
 
-                    if let Some(item) = item {
-                        if let Slot::Inventory(target) = target {
-                            inventory.insert_or_stack_at(target, item).ok();
-                        }
+                    if let Some(item) = item
+                        && let Slot::Inventory(target) = target
+                    {
+                        inventory.insert_or_stack_at(target, item).ok();
                     }
 
                     data.inventory_updates

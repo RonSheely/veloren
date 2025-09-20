@@ -1,5 +1,5 @@
 use super::{
-    SpriteCfg, SpriteKind,
+    SpriteKind,
     sprite::{self, RelativeNeighborPosition},
 };
 use crate::{
@@ -297,17 +297,19 @@ impl Block {
     /// Returns the rtsim resource, if any, that this block corresponds to. If
     /// you want the scarcity of a block to change with rtsim's resource
     /// depletion tracking, you can do so by editing this function.
+    // TODO: Return type should be `Option<&'static [(rtsim::TerrainResource, f32)]>` to allow
+    // fractional quantities and multiple resources per sprite
     #[inline]
-    pub fn get_rtsim_resource(&self) -> Option<rtsim::ChunkResource> {
+    pub fn get_rtsim_resource(&self) -> Option<rtsim::TerrainResource> {
         match self.get_sprite()? {
-            SpriteKind::Stones => Some(rtsim::ChunkResource::Stone),
+            SpriteKind::Stones => Some(rtsim::TerrainResource::Stone),
             SpriteKind::Twigs
                 | SpriteKind::Wood
                 | SpriteKind::Bamboo
                 | SpriteKind::Hardwood
                 | SpriteKind::Ironwood
                 | SpriteKind::Frostwood
-                | SpriteKind::Eldwood => Some(rtsim::ChunkResource::Wood),
+                | SpriteKind::Eldwood => Some(rtsim::TerrainResource::Wood),
             SpriteKind::Amethyst
                 | SpriteKind::Ruby
                 | SpriteKind::Sapphire
@@ -315,7 +317,7 @@ impl Block {
                 | SpriteKind::Topaz
                 | SpriteKind::Diamond
                 | SpriteKind::CrystalHigh
-                | SpriteKind::CrystalLow => Some(rtsim::ChunkResource::Gem),
+                | SpriteKind::CrystalLow => Some(rtsim::TerrainResource::Gem),
             SpriteKind::Bloodstone
                 | SpriteKind::Coal
                 | SpriteKind::Cobalt
@@ -323,7 +325,7 @@ impl Block {
                 | SpriteKind::Iron
                 | SpriteKind::Tin
                 | SpriteKind::Silver
-                | SpriteKind::Gold => Some(rtsim::ChunkResource::Ore),
+                | SpriteKind::Gold => Some(rtsim::TerrainResource::Ore),
 
             SpriteKind::LongGrass
                 | SpriteKind::MediumGrass
@@ -334,7 +336,7 @@ impl Block {
                 | SpriteKind::TallSavannaGrass
                 | SpriteKind::RedSavannaGrass
                 | SpriteKind::JungleRedGrass
-                | SpriteKind::Fern => Some(rtsim::ChunkResource::Grass),
+                | SpriteKind::Fern => Some(rtsim::TerrainResource::Grass),
             SpriteKind::BlueFlower
                 | SpriteKind::PinkFlower
                 | SpriteKind::PurpleFlower
@@ -343,29 +345,29 @@ impl Block {
                 | SpriteKind::YellowFlower
                 | SpriteKind::Sunflower
                 | SpriteKind::Moonbell
-                | SpriteKind::Pyrebloom => Some(rtsim::ChunkResource::Flower),
+                | SpriteKind::Pyrebloom => Some(rtsim::TerrainResource::Flower),
             SpriteKind::Reed
                 | SpriteKind::Flax
                 | SpriteKind::WildFlax
                 | SpriteKind::Cotton
                 | SpriteKind::Corn
                 | SpriteKind::WheatYellow
-                | SpriteKind::WheatGreen => Some(rtsim::ChunkResource::Plant),
+                | SpriteKind::WheatGreen => Some(rtsim::TerrainResource::Plant),
             SpriteKind::Apple
                 | SpriteKind::Pumpkin
                 | SpriteKind::Beehive // TODO: Not a fruit, but kind of acts like one
-                | SpriteKind::Coconut => Some(rtsim::ChunkResource::Fruit),
+                | SpriteKind::Coconut => Some(rtsim::TerrainResource::Fruit),
             SpriteKind::Lettuce
                 | SpriteKind::Carrot
                 | SpriteKind::Tomato
                 | SpriteKind::Radish
-                | SpriteKind::Turnip => Some(rtsim::ChunkResource::Vegetable),
+                | SpriteKind::Turnip => Some(rtsim::TerrainResource::Vegetable),
             SpriteKind::Mushroom
                 | SpriteKind::CaveMushroom
                 | SpriteKind::CeilingMushroom
                 | SpriteKind::RockyMushroom
                 | SpriteKind::LushMushroom
-                | SpriteKind::GlowMushroom => Some(rtsim::ChunkResource::Mushroom),
+                | SpriteKind::GlowMushroom => Some(rtsim::TerrainResource::Mushroom),
 
             SpriteKind::Chest
                 | SpriteKind::ChestBuried
@@ -380,9 +382,14 @@ impl Block {
                 | SpriteKind::HaniwaUrn
                 | SpriteKind::TerracottaChest
                 | SpriteKind::SahaginChest
-                | SpriteKind::Crate => Some(rtsim::ChunkResource::Loot),
+                | SpriteKind::Crate
+                | SpriteKind::CommonLockedChest => Some(rtsim::TerrainResource::Loot),
             _ => None,
         }
+        // Don't count collected sprites.
+        // TODO: we may want to have rtsim still spawn these sprites when depleted by spawning them
+        // in the "collected" state, see `into_collected` for sprites that would need this.
+        .filter(|_|  matches!(self.get_attr(), Ok(sprite::Collectable(false)) | Err(_)))
     }
 
     #[inline]
@@ -553,6 +560,7 @@ impl Block {
                 | SpriteKind::HaniwaTrap
                 | SpriteKind::HaniwaTrapTriggered
                 | SpriteKind::ChestBuried
+                | SpriteKind::CommonLockedChest
                 | SpriteKind::TerracottaChest
                 | SpriteKind::SahaginChest
                 | SpriteKind::SeaDecorBlock
@@ -583,20 +591,28 @@ impl Block {
         }
     }
 
-    /// Whether the block containes a sprite that marked to be collectible
+    /// Whether the block containes a sprite that is collectible.
     ///
-    /// Check docs for [`SpriteKind::default_tool`] for more.
+    /// Note, this is based on [`SpriteKind::collectible_info`] and accounts for
+    /// if the [`Collectable`][`sprite::Collectable`] sprite attr is `false`.
     #[inline]
-    pub fn default_tool(&self) -> Option<Option<ToolKind>> {
-        self.get_sprite().and_then(|s| s.default_tool())
+    pub fn is_collectible(&self) -> bool {
+        self.get_sprite()
+            .is_some_and(|s| s.collectible_info().is_some())
+            && matches!(self.get_attr(), Ok(sprite::Collectable(true)) | Err(_))
     }
 
+    /// Can this sprite be picked up to yield an item without a tool?
+    ///
+    /// Note, this is based on [`SpriteKind::collectible_info`] and accounts for
+    /// if the [`Collectable`][`sprite::Collectable`] sprite attr is `false`.
     #[inline]
-    pub fn is_collectible(&self, sprite_cfg: Option<&SpriteCfg>) -> bool {
-        self.get_sprite().is_some_and(|s| {
-            sprite_cfg.and_then(|cfg| cfg.loot_table.as_ref()).is_some()
-                || s.default_tool() == Some(None)
-        }) && matches!(self.get_attr(), Ok(sprite::Collectable(true)) | Err(_))
+    pub fn is_directly_collectible(&self) -> bool {
+        // NOTE: This doesn't require `SpriteCfg` because `SpriteCfg::loot_table` is
+        // only expected to be set for `collectible_info.is_some()` sprites!
+        self.get_sprite()
+            .is_some_and(|s| s.collectible_info() == Some(None))
+            && matches!(self.get_attr(), Ok(sprite::Collectable(true)) | Err(_))
     }
 
     #[inline]
@@ -709,11 +725,23 @@ impl Block {
     /// If this block is a fluid, replace its sprite.
     #[inline]
     #[must_use]
-    pub fn with_sprite(mut self, sprite: SpriteKind) -> Self {
-        if !self.is_filled() {
-            self = Self::unfilled(self.kind, sprite);
+    pub fn with_sprite(self, sprite: SpriteKind) -> Self {
+        match self.try_with_sprite(sprite) {
+            Ok(b) => b,
+            Err(b) => b,
         }
-        self
+    }
+
+    /// If this block is a fluid, replace its sprite.
+    ///
+    /// Returns block in `Err` if the sprite was not replaced.
+    #[inline]
+    pub fn try_with_sprite(self, sprite: SpriteKind) -> Result<Self, Self> {
+        if self.is_filled() {
+            Err(self)
+        } else {
+            Ok(Self::unfilled(self.kind, sprite))
+        }
     }
 
     /// If this block can have orientation, give it a new orientation.
@@ -738,6 +766,22 @@ impl Block {
             // FIXME: Figure out if there's some sensible way to determine what medium to
             // replace a filled block with if it's removed.
             Block::air(SpriteKind::Empty)
+        }
+    }
+
+    /// Apply the effect of collecting the sprite in this block.
+    ///
+    /// This sets the `Collectable` attribute to `false` for some sprites like
+    /// `Lettuce`. Other sprites will simply be removed via
+    /// [`into_vacant`][Self::into_vacant].
+    #[inline]
+    #[must_use]
+    pub fn into_collected(self) -> Self {
+        match self.get_sprite() {
+            Some(SpriteKind::Lettuce) => self.with_attr(sprite::Collectable(false)).expect(
+                "Setting collectable will not fail since this sprite has Collectable attribute",
+            ),
+            _ => self.into_vacant(),
         }
     }
 

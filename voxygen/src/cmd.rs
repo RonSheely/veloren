@@ -52,6 +52,8 @@ pub enum ClientChatCommand {
     Help,
     /// Mutes a player in the chat
     Mute,
+    /// Toggles use of naga for shader processing (change not persisted).
+    Naga,
     /// Unmutes a previously muted player
     Unmute,
     /// Displays the name of the site or biome where the current waypoint is
@@ -91,6 +93,7 @@ impl ClientChatCommand {
                 Content::localized("command-help-desc"),
                 None,
             ),
+            ClientChatCommand::Naga => cmd(vec![], Content::localized("command-naga-desc"), None),
             ClientChatCommand::Mute => cmd(
                 vec![PlayerName(Required)],
                 Content::localized("command-mute-desc"),
@@ -120,6 +123,7 @@ impl ClientChatCommand {
             ClientChatCommand::Clear => "clear",
             ClientChatCommand::ExperimentalShader => "experimental_shader",
             ClientChatCommand::Help => "help",
+            ClientChatCommand::Naga => "naga",
             ClientChatCommand::Mute => "mute",
             ClientChatCommand::Unmute => "unmute",
             ClientChatCommand::Waypoint => "waypoint",
@@ -455,6 +459,7 @@ fn run_client_command(
         ClientChatCommand::Clear => handle_clear,
         ClientChatCommand::ExperimentalShader => handle_experimental_shader,
         ClientChatCommand::Help => handle_help,
+        ClientChatCommand::Naga => handle_naga,
         ClientChatCommand::Mute => handle_mute,
         ClientChatCommand::Unmute => handle_unmute,
         ClientChatCommand::Waypoint => handle_waypoint,
@@ -464,7 +469,7 @@ fn run_client_command(
     command(session_state, global_state, args)
 }
 
-/// Handles [`ClientChatCommand::Unmute`]
+/// Handles [`ClientChatCommand::Clear`]
 fn handle_clear(
     session_state: &mut SessionState,
     _global_state: &mut GlobalState,
@@ -472,146 +477,6 @@ fn handle_clear(
 ) -> CommandResult {
     session_state.hud.clear_chat();
     Ok(None)
-}
-
-/// Handles [`ClientChatCommand::Help`]
-///
-/// If a command name is provided as an argument, displays help for that
-/// specific command. Otherwise, displays a list of all available commands the
-/// player can use, filtered by their administrative role.
-fn handle_help(
-    session_state: &mut SessionState,
-    global_state: &mut GlobalState,
-    args: Vec<String>,
-) -> CommandResult {
-    let i18n = global_state.i18n.read();
-
-    if let Some(cmd) = parse_cmd_args!(&args, ServerChatCommand) {
-        Ok(Some(cmd.help_content()))
-    } else if let Some(cmd) = parse_cmd_args!(&args, ClientChatCommand) {
-        Ok(Some(cmd.help_content()))
-    } else {
-        let client = &mut session_state.client.borrow_mut();
-
-        let entity_role = client
-            .state()
-            .read_storage::<Admin>()
-            .get(client.entity())
-            .map(|admin| admin.0);
-
-        let client_commands = ClientChatCommand::iter()
-            .map(|cmd| i18n.get_content(&cmd.help_content()))
-            .join("\n");
-
-        // Iterate through all ServerChatCommands you have permission to use.
-        let server_commands = ServerChatCommand::iter()
-            .filter(|cmd| cmd.needs_role() <= entity_role)
-            .map(|cmd| i18n.get_content(&cmd.help_content()))
-            .join("\n");
-
-        let additional_shortcuts = ServerChatCommand::iter()
-            .filter(|cmd| cmd.needs_role() <= entity_role)
-            .filter_map(|cmd| cmd.short_keyword().map(|k| (k, cmd)))
-            .map(|(k, cmd)| format!("/{} => /{}", k, cmd.keyword()))
-            .join("\n");
-
-        Ok(Some(Content::localized_with_args("command-help-list", [
-            ("client-commands", LocalizationArg::from(client_commands)),
-            ("server-commands", LocalizationArg::from(server_commands)),
-            (
-                "additional-shortcuts",
-                LocalizationArg::from(additional_shortcuts),
-            ),
-        ])))
-    }
-}
-
-/// Handles [`ClientChatCommand::Mute`]
-fn handle_mute(
-    session_state: &mut SessionState,
-    global_state: &mut GlobalState,
-    args: Vec<String>,
-) -> CommandResult {
-    if let Some(alias) = parse_cmd_args!(args, String) {
-        let client = &mut session_state.client.borrow_mut();
-
-        let target = client
-            .player_list()
-            .values()
-            .find(|p| p.player_alias == alias)
-            .ok_or_else(|| {
-                Content::localized_with_args("command-mute-no-player-found", [(
-                    "player",
-                    LocalizationArg::from(alias.clone()),
-                )])
-            })?;
-
-        if let Some(me) = client.uid().and_then(|uid| client.player_list().get(&uid)) {
-            if target.uuid == me.uuid {
-                return Err(Content::localized("command-mute-cannot-mute-self"));
-            }
-        }
-
-        if global_state
-            .profile
-            .mutelist
-            .insert(target.uuid, alias.clone())
-            .is_none()
-        {
-            Ok(Some(Content::localized_with_args(
-                "command-mute-success",
-                [("player", LocalizationArg::from(alias))],
-            )))
-        } else {
-            Err(Content::localized_with_args(
-                "command-mute-already-muted",
-                [("player", LocalizationArg::from(alias))],
-            ))
-        }
-    } else {
-        Err(Content::localized("command-mute-no-player-specified"))
-    }
-}
-
-/// Handles [`ClientChatCommand::Unmute`]
-fn handle_unmute(
-    session_state: &mut SessionState,
-    global_state: &mut GlobalState,
-    args: Vec<String>,
-) -> CommandResult {
-    // Note that we don't care if this is a real player currently online,
-    // so that it's possible to unmute someone when they're offline.
-    if let Some(alias) = parse_cmd_args!(args, String) {
-        if let Some(uuid) = global_state
-            .profile
-            .mutelist
-            .iter()
-            .find(|(_, v)| **v == alias)
-            .map(|(k, _)| *k)
-        {
-            let client = &mut session_state.client.borrow_mut();
-
-            if let Some(me) = client.uid().and_then(|uid| client.player_list().get(&uid)) {
-                if uuid == me.uuid {
-                    return Err(Content::localized("command-unmute-cannot-unmute-self"));
-                }
-            }
-
-            global_state.profile.mutelist.remove(&uuid);
-
-            Ok(Some(Content::localized_with_args(
-                "command-unmute-success",
-                [("player", LocalizationArg::from(alias))],
-            )))
-        } else {
-            Err(Content::localized_with_args(
-                "command-unmute-no-muted-player-found",
-                [("player", LocalizationArg::from(alias))],
-            ))
-        }
-    } else {
-        Err(Content::localized("command-unmute-no-player-specified"))
-    }
 }
 
 /// Handles [`ClientChatCommand::ExperimentalShader`]
@@ -672,6 +537,176 @@ fn handle_experimental_shader(
         }
     } else {
         Err(Content::localized("command-experimental-shaders-not-valid"))
+    }
+}
+
+/// Handles [`ClientChatCommand::Help`]
+///
+/// If a command name is provided as an argument, displays help for that
+/// specific command. Otherwise, displays a list of all available commands the
+/// player can use, filtered by their administrative role.
+fn handle_help(
+    session_state: &mut SessionState,
+    global_state: &mut GlobalState,
+    args: Vec<String>,
+) -> CommandResult {
+    let i18n = global_state.i18n.read();
+
+    if let Some(cmd) = parse_cmd_args!(&args, ServerChatCommand) {
+        Ok(Some(cmd.help_content()))
+    } else if let Some(cmd) = parse_cmd_args!(&args, ClientChatCommand) {
+        Ok(Some(cmd.help_content()))
+    } else {
+        let client = &mut session_state.client.borrow_mut();
+
+        let entity_role = client
+            .state()
+            .read_storage::<Admin>()
+            .get(client.entity())
+            .map(|admin| admin.0);
+
+        let client_commands = ClientChatCommand::iter()
+            .map(|cmd| i18n.get_content(&cmd.help_content()))
+            .join("\n");
+
+        // Iterate through all ServerChatCommands you have permission to use.
+        let server_commands = ServerChatCommand::iter()
+            .filter(|cmd| cmd.needs_role() <= entity_role)
+            .map(|cmd| i18n.get_content(&cmd.help_content()))
+            .join("\n");
+
+        let additional_shortcuts = ServerChatCommand::iter()
+            .filter(|cmd| cmd.needs_role() <= entity_role)
+            .filter_map(|cmd| cmd.short_keyword().map(|k| (k, cmd)))
+            .map(|(k, cmd)| format!("/{} => /{}", k, cmd.keyword()))
+            .join("\n");
+
+        Ok(Some(Content::localized_with_args("command-help-list", [
+            ("client-commands", LocalizationArg::from(client_commands)),
+            ("server-commands", LocalizationArg::from(server_commands)),
+            (
+                "additional-shortcuts",
+                LocalizationArg::from(additional_shortcuts),
+            ),
+        ])))
+    }
+}
+
+/// Handles [`ClientChatCommand::Naga`]
+///
+///Toggles use of naga in initial shader processing.
+fn handle_naga(
+    _session_state: &mut SessionState,
+    global_state: &mut GlobalState,
+    _args: Vec<String>,
+) -> CommandResult {
+    let mut new_render_mode = global_state.settings.graphics.render_mode.clone();
+    new_render_mode.enable_naga ^= true;
+    let naga_enabled = new_render_mode.enable_naga;
+    change_render_mode(
+        new_render_mode,
+        &mut global_state.window,
+        &mut global_state.settings,
+    );
+
+    Ok(Some(Content::localized_with_args(
+        "command-shader-backend",
+        [(
+            "shader-backend",
+            if naga_enabled {
+                LocalizationArg::from("naga")
+            } else {
+                LocalizationArg::from("shaderc")
+            },
+        )],
+    )))
+}
+
+/// Handles [`ClientChatCommand::Mute`]
+fn handle_mute(
+    session_state: &mut SessionState,
+    global_state: &mut GlobalState,
+    args: Vec<String>,
+) -> CommandResult {
+    if let Some(alias) = parse_cmd_args!(args, String) {
+        let client = &mut session_state.client.borrow_mut();
+
+        let target = client
+            .player_list()
+            .values()
+            .find(|p| p.player_alias == alias)
+            .ok_or_else(|| {
+                Content::localized_with_args("command-mute-no-player-found", [(
+                    "player",
+                    LocalizationArg::from(alias.clone()),
+                )])
+            })?;
+
+        if let Some(me) = client.uid().and_then(|uid| client.player_list().get(&uid))
+            && target.uuid == me.uuid
+        {
+            return Err(Content::localized("command-mute-cannot-mute-self"));
+        }
+
+        if global_state
+            .profile
+            .mutelist
+            .insert(target.uuid, alias.clone())
+            .is_none()
+        {
+            Ok(Some(Content::localized_with_args(
+                "command-mute-success",
+                [("player", LocalizationArg::from(alias))],
+            )))
+        } else {
+            Err(Content::localized_with_args(
+                "command-mute-already-muted",
+                [("player", LocalizationArg::from(alias))],
+            ))
+        }
+    } else {
+        Err(Content::localized("command-mute-no-player-specified"))
+    }
+}
+
+/// Handles [`ClientChatCommand::Unmute`]
+fn handle_unmute(
+    session_state: &mut SessionState,
+    global_state: &mut GlobalState,
+    args: Vec<String>,
+) -> CommandResult {
+    // Note that we don't care if this is a real player currently online,
+    // so that it's possible to unmute someone when they're offline.
+    if let Some(alias) = parse_cmd_args!(args, String) {
+        if let Some(uuid) = global_state
+            .profile
+            .mutelist
+            .iter()
+            .find(|(_, v)| **v == alias)
+            .map(|(k, _)| *k)
+        {
+            let client = &mut session_state.client.borrow_mut();
+
+            if let Some(me) = client.uid().and_then(|uid| client.player_list().get(&uid))
+                && uuid == me.uuid
+            {
+                return Err(Content::localized("command-unmute-cannot-unmute-self"));
+            }
+
+            global_state.profile.mutelist.remove(&uuid);
+
+            Ok(Some(Content::localized_with_args(
+                "command-unmute-success",
+                [("player", LocalizationArg::from(alias))],
+            )))
+        } else {
+            Err(Content::localized_with_args(
+                "command-unmute-no-muted-player-found",
+                [("player", LocalizationArg::from(alias))],
+            ))
+        }
+    } else {
+        Err(Content::localized("command-unmute-no-player-specified"))
     }
 }
 
@@ -856,8 +891,9 @@ fn complete_site(mut part: &str, client: &Client, i18n: &Localization) -> Vec<St
         .sites()
         .values()
         .filter_map(|site| match site.marker.kind {
-            common_net::msg::world_msg::MarkerKind::Cave => None,
-            _ => Some(i18n.get_content(site.marker.name.as_ref()?)),
+            common::map::MarkerKind::Cave => None,
+            // TODO: A bit of a hack: no guarantee that label will be the site name!
+            _ => Some(i18n.get_content(site.marker.label.as_ref()?)),
         })
         .filter(|name| name.starts_with(part))
         .map(|name| {

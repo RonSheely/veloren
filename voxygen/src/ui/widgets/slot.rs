@@ -57,7 +57,7 @@ where
         &mut self,
         contents: K,
         wh: [f32; 2],
-    ) -> Slot<K, C, I, S> {
+    ) -> Slot<'_, K, C, I, S> {
         let content_size = {
             let ContentSize {
                 max_fraction,
@@ -171,7 +171,7 @@ where
     S: SumSlot,
 {
     pub fn new(
-        mut gen: widget::id::Generator,
+        mut generator: widget::id::Generator,
         drag_img_size: Vec2<f32>,
         use_prefixes: bool,
         prefix_switch_point: u32,
@@ -186,13 +186,13 @@ where
             slot_ids: Vec::new(),
             slots: Vec::new(),
             events: Vec::new(),
-            drag_id: gen.next(),
+            drag_id: generator.next(),
             mouse_over_slot: None,
             use_prefixes,
             prefix_switch_point,
             // TODO(heyzoos) Will be useful for whoever works on rendering the number of items "in
-            // hand". drag_amount_id: gen.next(),
-            // drag_amount_shadow_id: gen.next(),
+            // hand". drag_amount_id: generator.next(),
+            // drag_amount_shadow_id: generator.next(),
             // amount_font,
             // amount_font_size,
             // amount_margins,
@@ -207,11 +207,11 @@ where
         let slots = core::mem::take(&mut self.slots);
 
         // Detect drops by of selected item by clicking in empty space
-        if let ManagerState::Selected(_, slot) = self.state {
-            if ui.widget_input(ui.window).clicks().left().next().is_some() {
-                self.state = ManagerState::Idle;
-                self.events.push(Event::Dropped(slot));
-            }
+        if let ManagerState::Selected(_, slot) = self.state
+            && ui.widget_input(ui.window).clicks().left().next().is_some()
+        {
+            self.state = ManagerState::Idle;
+            self.events.push(Event::Dropped(slot));
         }
 
         let input = &ui.global_input().current;
@@ -237,19 +237,17 @@ where
             // works with open slots or slots containing the same kind of
             // item.
 
-            if drag_amount.is_some() {
-                if let Some(id) = input.widget_under_mouse {
-                    if ui.widget_input(id).clicks().right().next().is_some() {
-                        if id == ui.window {
-                            let temp_slot = *slot;
-                            self.events.push(Event::SplitDropped(temp_slot));
-                        } else if let Some(idx) = slot_ids.iter().position(|slot_id| *slot_id == id)
-                        {
-                            let (from, to) = (*slot, slots[idx]);
-                            if from != to {
-                                self.events.push(Event::SplitDragged(from, to));
-                            }
-                        }
+            if drag_amount.is_some()
+                && let Some(id) = input.widget_under_mouse
+                && ui.widget_input(id).clicks().right().next().is_some()
+            {
+                if id == ui.window {
+                    let temp_slot = *slot;
+                    self.events.push(Event::SplitDropped(temp_slot));
+                } else if let Some(idx) = slot_ids.iter().position(|slot_id| *slot_id == id) {
+                    let (from, to) = (*slot, slots[idx]);
+                    if from != to {
+                        self.events.push(Event::SplitDragged(from, to));
                     }
                 }
             }
@@ -393,25 +391,25 @@ where
 
         // Translate ctrl-clicks to stack-requests and shift-clicks to
         // individual-requests
-        if let Some(click) = input.clicks().left().next() {
-            if !matches!(self.state, ManagerState::Dragging(_, _, _, _)) {
-                match click.modifiers {
-                    ModifierKey::CTRL => {
-                        self.events.push(Event::Request {
-                            slot,
-                            auto_quantity: true,
-                        });
-                        self.state = ManagerState::Idle;
-                    },
-                    ModifierKey::SHIFT => {
-                        self.events.push(Event::Request {
-                            slot,
-                            auto_quantity: false,
-                        });
-                        self.state = ManagerState::Idle;
-                    },
-                    _ => {},
-                }
+        if let Some(click) = input.clicks().left().next()
+            && !matches!(self.state, ManagerState::Dragging(_, _, _, _))
+        {
+            match click.modifiers {
+                ModifierKey::CTRL => {
+                    self.events.push(Event::Request {
+                        slot,
+                        auto_quantity: true,
+                    });
+                    self.state = ManagerState::Idle;
+                },
+                ModifierKey::SHIFT => {
+                    self.events.push(Event::Request {
+                        slot,
+                        auto_quantity: false,
+                    });
+                    self.state = ManagerState::Idle;
+                },
+                _ => {},
             }
         }
 
@@ -432,10 +430,10 @@ where
             && !matches!(self.state, ManagerState::Dragging(_, _, _, _))
         {
             // Start dragging if widget is filled
-            if let Some(images) = content_img {
-                if !images.is_empty() {
-                    self.state = ManagerState::Dragging(widget, slot, images[0], drag_amount);
-                }
+            if let Some(images) = content_img
+                && !images.is_empty()
+            {
+                self.state = ManagerState::Dragging(widget, slot, images[0], drag_amount);
             }
         }
 

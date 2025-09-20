@@ -26,7 +26,7 @@ use common::{
 use common_base::prof_span;
 use core::{fmt, hash::BuildHasherDefault, ops::Range};
 use fxhash::FxHasher64;
-use rand::prelude::*;
+use rand::{SeedableRng, prelude::*};
 use rand_chacha::ChaChaRng;
 use tracing::{debug, info, warn};
 use vek::*;
@@ -147,8 +147,8 @@ impl ProximityRequirementsBuilder {
             })
             .map(|hint| hint.intersection(*world_dims))
             .unwrap_or_else(|| world_dims.to_owned());
-        let hint = self
-            .all_of
+
+        self.all_of
             .iter()
             .fold(any_of_hint, |acc, spec| match spec.max_distance {
                 None => acc,
@@ -157,8 +157,7 @@ impl ProximityRequirementsBuilder {
                         bounding_box_of_point(spec.location, max_distance);
                     acc.intersection(bounding_box_of_new_point)
                 },
-            });
-        hint
+            })
     }
 
     pub fn new() -> Self {
@@ -210,7 +209,7 @@ impl ProximityRequirements {
 
 impl<R: Rng> GenCtx<'_, R> {
     pub fn reseed(&mut self) -> GenCtx<'_, impl Rng + use<R>> {
-        let mut entropy = self.rng.gen::<[u8; 32]>();
+        let mut entropy = self.rng.random::<[u8; 32]>();
         entropy[0] = entropy[0].wrapping_add(SEED_SKIP); // Skip bad seeds
         GenCtx {
             sim: self.sim,
@@ -273,7 +272,7 @@ impl Civs {
         let world_dims = ctx.sim.get_aabr();
         for _ in 0..initial_civ_count * 3 {
             attempt(5, || {
-                let (loc, kind) = match ctx.rng.gen_range(0..116) {
+                let (loc, kind) = match ctx.rng.random_range(0..116) {
                     0..=4 => (
                         find_site_loc(
                             &mut ctx,
@@ -525,7 +524,7 @@ impl Civs {
                             chunk.alt += diff;
                             chunk.basement += diff;
                             chunk.rockiness = 0.0;
-                            chunk.surface_veg *= 1.0 - factor * rng.gen_range(0.25..0.9);
+                            chunk.surface_veg *= 1.0 - factor * rng.random_range(0.25..0.9);
                         });
                 }
             }
@@ -553,7 +552,7 @@ impl Civs {
                 };
                 match &sim_site.kind {
                     SiteKind::Refactor => {
-                        let size = Lerp::lerp(0.03, 1.0, rng.gen_range(0.0..1f32).powi(5));
+                        let size = Lerp::lerp(0.03, 1.0, rng.random_range(0.0..1f32).powi(5));
                         WorldSite::generate_city(
                             &Land::from_sim(ctx.sim),
                             index_ref,
@@ -722,22 +721,21 @@ impl Civs {
         for (s1, val) in this.track_map.iter() {
             if let Some(index1) = this.sites.get(*s1).site_tmp {
                 for (s2, t) in val.iter() {
-                    if let Some(index2) = this.sites.get(*s2).site_tmp {
-                        if index.sites.get(index1).do_economic_simulation()
-                            && index.sites.get(index2).do_economic_simulation()
-                        {
-                            let cost = this.tracks.get(*t).path.len();
-                            index
-                                .sites
-                                .get_mut(index1)
-                                .economy_mut()
-                                .add_neighbor(index2, cost);
-                            index
-                                .sites
-                                .get_mut(index2)
-                                .economy_mut()
-                                .add_neighbor(index1, cost);
-                        }
+                    if let Some(index2) = this.sites.get(*s2).site_tmp
+                        && index.sites.get(index1).do_economic_simulation()
+                        && index.sites.get(index2).do_economic_simulation()
+                    {
+                        let cost = this.tracks.get(*t).path.len();
+                        index
+                            .sites
+                            .get_mut(index1)
+                            .economy_mut()
+                            .add_neighbor(index2, cost);
+                        index
+                            .sites
+                            .get_mut(index2)
+                            .economy_mut()
+                            .add_neighbor(index1, cost);
                     }
                 }
             }
@@ -853,7 +851,7 @@ impl Civs {
 
     fn birth_civ(&mut self, ctx: &mut GenCtx<impl Rng>) -> Option<Id<Civ>> {
         // TODO: specify SiteKind based on where a suitable location is found
-        let kind = match ctx.rng.gen_range(0..64) {
+        let kind = match ctx.rng.random_range(0..64) {
             0..=8 => SiteKind::CliffTown,
             9..=17 => SiteKind::DesertCity,
             18..=23 => SiteKind::SavannahTown,
@@ -949,13 +947,13 @@ impl Civs {
             let name = match biome.0 {
                 common::terrain::BiomeKind::Lake if biome.1.len() as u32 > 200 => Some(format!(
                     "{} {}",
-                    ["Lake", "Loch"].choose(&mut ctx.rng).unwrap(),
+                    ["Lake", "Loch"].choose_mut(&mut ctx.rng).unwrap(),
                     NameGen::location(&mut ctx.rng).generate_lake_custom()
                 )),
                 common::terrain::BiomeKind::Lake if biome.1.len() as u32 > 10 => Some(format!(
                     "{} {}",
                     NameGen::location(&mut ctx.rng).generate_lake_custom(),
-                    ["Pool", "Well", "Pond"].choose(&mut ctx.rng).unwrap()
+                    ["Pool", "Well", "Pond"].choose_mut(&mut ctx.rng).unwrap()
                 )),
                 common::terrain::BiomeKind::Grassland if biome.1.len() as u32 > 750 => {
                     Some(format!(
@@ -964,7 +962,7 @@ impl Civs {
                             NameGen::location(&mut ctx.rng).generate_grassland_engl(),
                             NameGen::location(&mut ctx.rng).generate_grassland_custom()
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap(),
                         [
                             "Grasslands",
@@ -979,7 +977,7 @@ impl Civs {
                             "Downs",
                             "Greens",
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap()
                     ))
                 },
@@ -989,10 +987,10 @@ impl Civs {
                         NameGen::location(&mut ctx.rng).generate_ocean_engl(),
                         NameGen::location(&mut ctx.rng).generate_ocean_custom()
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap(),
                     ["Sea", "Bay", "Gulf", "Deep", "Depths", "Ocean", "Blue",]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap()
                 )),
                 common::terrain::BiomeKind::Mountain if biome.1.len() as u32 > 750 => {
@@ -1002,7 +1000,7 @@ impl Civs {
                             NameGen::location(&mut ctx.rng).generate_mountain_engl(),
                             NameGen::location(&mut ctx.rng).generate_mountain_custom()
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap(),
                         [
                             "Mountains",
@@ -1018,7 +1016,7 @@ impl Civs {
                             "Canyon",
                             "Plateau",
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap()
                     ))
                 },
@@ -1029,7 +1027,7 @@ impl Civs {
                             NameGen::location(&mut ctx.rng).generate_snowland_engl(),
                             NameGen::location(&mut ctx.rng).generate_snowland_custom()
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap(),
                         [
                             "Snowlands",
@@ -1042,7 +1040,7 @@ impl Civs {
                             "Uplands",
                             "Highlands",
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap()
                     ))
                 },
@@ -1052,12 +1050,12 @@ impl Civs {
                         NameGen::location(&mut ctx.rng).generate_desert_engl(),
                         NameGen::location(&mut ctx.rng).generate_desert_custom()
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap(),
                     [
                         "Desert", "Sands", "Sandsea", "Drifts", "Dunes", "Droughts", "Flats",
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap()
                 )),
                 common::terrain::BiomeKind::Swamp if biome.1.len() as u32 > 200 => Some(format!(
@@ -1076,7 +1074,7 @@ impl Civs {
                         "Fen",
                         "Moors",
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap()
                 )),
                 common::terrain::BiomeKind::Jungle if biome.1.len() as u32 > 85 => Some(format!(
@@ -1085,7 +1083,7 @@ impl Civs {
                         NameGen::location(&mut ctx.rng).generate_jungle_engl(),
                         NameGen::location(&mut ctx.rng).generate_jungle_custom()
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap(),
                     [
                         "Jungle",
@@ -1097,7 +1095,7 @@ impl Civs {
                         "Tanglewood",
                         "Bush",
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap()
                 )),
                 common::terrain::BiomeKind::Forest if biome.1.len() as u32 > 750 => Some(format!(
@@ -1106,10 +1104,10 @@ impl Civs {
                         NameGen::location(&mut ctx.rng).generate_forest_engl(),
                         NameGen::location(&mut ctx.rng).generate_forest_custom()
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap(),
                     ["Forest", "Woodlands", "Woods", "Glades", "Grove", "Weald",]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap()
                 )),
                 common::terrain::BiomeKind::Savannah if biome.1.len() as u32 > 750 => {
@@ -1119,7 +1117,7 @@ impl Civs {
                             NameGen::location(&mut ctx.rng).generate_savannah_engl(),
                             NameGen::location(&mut ctx.rng).generate_savannah_custom()
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap(),
                         [
                             "Savannah",
@@ -1129,7 +1127,7 @@ impl Civs {
                             "Lowlands",
                             "Flats",
                         ]
-                        .choose(&mut ctx.rng)
+                        .choose_mut(&mut ctx.rng)
                         .unwrap()
                     ))
                 },
@@ -1139,7 +1137,7 @@ impl Civs {
                         NameGen::location(&mut ctx.rng).generate_taiga_engl(),
                         NameGen::location(&mut ctx.rng).generate_taiga_custom()
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap(),
                     [
                         "Forest",
@@ -1149,7 +1147,7 @@ impl Civs {
                         "Highlands",
                         "Uplands",
                     ]
-                    .choose(&mut ctx.rng)
+                    .choose_mut(&mut ctx.rng)
                     .unwrap()
                 )),
                 _ => None,
@@ -1240,13 +1238,13 @@ impl Civs {
                     name: {
                         let name = NameGen::location(rng).generate();
                         if *alt < 1000 {
-                            match rng.gen_range(0..6) {
+                            match rng.random_range(0..6) {
                                 0 => format!("{} Bluff", name),
                                 1 => format!("{} Crag", name),
                                 _ => format!("{} Hill", name),
                             }
                         } else {
-                            match rng.gen_range(0..8) {
+                            match rng.random_range(0..8) {
                                 0 => format!("{}'s Peak", name),
                                 1 => format!("{} Peak", name),
                                 2 => format!("{} Summit", name),
@@ -1354,8 +1352,10 @@ impl Civs {
                                 1 << ((i as u8 + 4) % 8);
 
                             ctx.sim.get_mut(locs[1]).unwrap().path.0.neighbors |= 1 << (i as u8);
-                            ctx.sim.get_mut(locs[1]).unwrap().path.0.offset =
-                                Vec2::new(ctx.rng.gen_range(-16..17), ctx.rng.gen_range(-16..17));
+                            ctx.sim.get_mut(locs[1]).unwrap().path.0.offset = Vec2::new(
+                                ctx.rng.random_range(-16..17),
+                                ctx.rng.random_range(-16..17),
+                            );
                         } else if !self.bridges.contains_key(&locs[1]) {
                             let center = (locs[1] + locs[2]) / 2;
                             let id =
@@ -1641,8 +1641,10 @@ fn find_site_loc(
     for _ in 0..MAX_ATTEMPTS {
         let test_loc = loc.unwrap_or_else(|| {
             Vec2::new(
-                ctx.rng.gen_range(location_hint.min.x..location_hint.max.x),
-                ctx.rng.gen_range(location_hint.min.y..location_hint.max.y),
+                ctx.rng
+                    .random_range(location_hint.min.x..location_hint.max.x),
+                ctx.rng
+                    .random_range(location_hint.min.y..location_hint.max.y),
             )
         });
 

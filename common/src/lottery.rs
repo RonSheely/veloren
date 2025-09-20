@@ -26,10 +26,10 @@
 // Cheese drop rate = 3/X = 29.6%
 // Coconut drop rate = 1/X = 9.85%
 
-use std::hash::Hash;
+use std::{borrow::Cow, hash::Hash};
 
 use crate::{
-    assets::{self, AssetExt},
+    assets::{AssetExt, BoxedError, FileAsset, load_ron},
     comp::{Item, inventory::item},
 };
 use rand::prelude::*;
@@ -42,10 +42,12 @@ pub struct Lottery<T> {
     total: f32,
 }
 
-impl<T: DeserializeOwned + Send + Sync + 'static> assets::Asset for Lottery<T> {
-    type Loader = assets::LoadFrom<Vec<(f32, T)>, assets::RonLoader>;
-
+impl<T: DeserializeOwned + Send + Sync + 'static> FileAsset for Lottery<T> {
     const EXTENSION: &'static str = "ron";
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Result<Self, BoxedError> {
+        load_ron::<Vec<(f32, T)>>(&bytes).map(Vec::into)
+    }
 }
 
 impl<T> From<Vec<(f32, T)>> for Lottery<T> {
@@ -71,7 +73,7 @@ impl<T> Lottery<T> {
         .1
     }
 
-    pub fn choose(&self) -> &T { self.choose_seeded(thread_rng().gen()) }
+    pub fn choose(&self) -> &T { self.choose_seeded(rand::rng().random()) }
 
     pub fn iter(&self) -> impl Iterator<Item = &(f32, T)> { self.items.iter() }
 
@@ -148,7 +150,7 @@ pub fn distribute_many<T: Copy + Eq + Hash, I>(
             // to keep things well distributed.
             let max_give = (amount / participants.len() as u32).clamp(1, amount - distributed);
             give = give.clamp(1, max_give);
-            let x = rng.gen_range(0.0..=current_total_weight);
+            let x = rng.random_range(0.0..=current_total_weight);
 
             let index = participants
                 .binary_search_by(|item| item.sorted_weight.partial_cmp(&x).unwrap())
@@ -209,12 +211,14 @@ pub fn distribute_many<T: Copy + Eq + Hash, I>(
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[rustfmt::skip] // breaks doc comments
+#[derive(Default)]
 pub enum LootSpec<T: AsRef<str>> {
     /// Asset specifier
     Item(T),
     /// Loot table
     LootTable(T),
     /// No loot given
+    #[default]
     Nothing,
     /// Random modular weapon that matches requested restrictions
     ModularWeapon {
@@ -404,7 +408,7 @@ impl<T: AsRef<str>> LootSpec<T> {
                 }
             },
             Self::MultiDrop(loot_spec, lower, upper) => {
-                let sub_amount = rng.gen_range(*lower..=*upper);
+                let sub_amount = rng.random_range(*lower..=*upper);
                 // We saturate at 4 billion items, could use u64 instead if this isn't
                 // desirable.
                 loot_spec.to_items_inner(rng, sub_amount.saturating_mul(amount), items);
@@ -419,7 +423,7 @@ impl<T: AsRef<str>> LootSpec<T> {
 
     pub fn to_items(&self) -> Option<Vec<(u32, Item)>> {
         let mut items = Vec::new();
-        self.to_items_inner(&mut thread_rng(), 1, &mut items);
+        self.to_items_inner(&mut rand::rng(), 1, &mut items);
 
         if !items.is_empty() {
             items.sort_unstable_by_key(|(amount, _)| *amount);
@@ -429,10 +433,6 @@ impl<T: AsRef<str>> LootSpec<T> {
             None
         }
     }
-}
-
-impl Default for LootSpec<String> {
-    fn default() -> Self { Self::Nothing }
 }
 
 #[cfg(test)]
@@ -445,7 +445,7 @@ pub mod tests {
 
     #[cfg(test)]
     pub fn validate_loot_spec(item: &LootSpec<String>) {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         match item {
             LootSpec::Item(item) => {
                 Item::new_from_asset_expect(item);
@@ -528,7 +528,7 @@ pub mod tests {
 
     #[test]
     fn test_distribute_many() {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         // Known successful case
         for _ in 0..10 {

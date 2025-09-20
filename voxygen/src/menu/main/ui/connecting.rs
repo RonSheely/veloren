@@ -11,10 +11,9 @@ use crate::{
     },
 };
 use client::ClientInitStage;
-use common::assets::{self, AssetExt};
+use common::assets::{self, AssetExt, Ron};
 use i18n::Localization;
 use iced::{Align, Column, Container, Length, Row, Space, Text, button};
-use serde::{Deserialize, Serialize};
 #[cfg(feature = "singleplayer")]
 use server::{ServerInitStage, WorldCivStage, WorldGenerateStage, WorldSimStage};
 
@@ -47,14 +46,6 @@ impl LoadingAnimation {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-struct LoadingAnimationManifest(Vec<(f32, Vec<String>)>);
-impl assets::Asset for LoadingAnimationManifest {
-    type Loader = assets::RonLoader;
-
-    const EXTENSION: &'static str = "ron";
-}
-
 /// Connecting screen for the main menu
 pub struct Screen {
     cancel_button: button::State,
@@ -65,19 +56,17 @@ pub struct Screen {
 
 impl Screen {
     pub fn new(ui: &mut Ui) -> Self {
-        let animations =
-            LoadingAnimationManifest::load("voxygen.element.animation.loaders.manifest")
-                .expect(
-                    "Missing loader manifest file 'voxygen/element/animation/loaders/manifest.ron'",
-                )
-                .cloned()
-                .0;
+        let animations = Ron::<Vec<(f32, Vec<String>)>>::load_cloned(
+            "voxygen.element.animation.loaders.manifest",
+        )
+        .expect("Missing loader manifest file 'voxygen/element/animation/loaders/manifest.ron'")
+        .into_inner();
         Self {
             cancel_button: Default::default(),
             add_button: Default::default(),
             tip_number: rand::random(),
             loading_animation: LoadingAnimation::new(
-                &animations[rand::random::<usize>() % animations.len()],
+                &animations[(rand::random::<u64>() as usize) % animations.len()],
                 ui,
             ),
         }
@@ -94,7 +83,7 @@ impl Screen {
         button_style: style::button::Style,
         show_tip: bool,
         controls: &ControlSettings,
-    ) -> Element<Message> {
+    ) -> Element<'_, Message> {
         // TODO: add built in support for animated images
         let frame_index = (time * self.loading_animation.speed_factor as f64)
             % self.loading_animation.frames.len() as f64;

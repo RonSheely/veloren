@@ -1,7 +1,7 @@
 use crate::{
     consts::{
         AVG_FOLLOW_DIST, DEFAULT_ATTACK_RANGE, IDLE_HEALING_ITEM_THRESHOLD, MAX_PATROL_DIST,
-        PARTIAL_PATH_DIST, SEPARATION_BIAS, SEPARATION_DIST, STD_AWARENESS_DECAY_RATE,
+        SEPARATION_BIAS, SEPARATION_DIST, STD_AWARENESS_DECAY_RATE,
     },
     data::{AgentData, AgentEmitters, AttackData, Path, ReadData, Tactic, TargetData},
     util::{
@@ -41,7 +41,7 @@ use common::{
     vol::ReadVol,
 };
 use itertools::Itertools;
-use rand::{Rng, thread_rng};
+use rand::{Rng, rng};
 use specs::Entity as EcsEntity;
 use vek::*;
 
@@ -102,14 +102,10 @@ impl AgentData<'_> {
     ) -> Option<Vec3<f32>> {
         self.dismount_uncontrollable(controller, read_data);
 
-        let partial_path_tgt_pos = |pos_difference: Vec3<f32>| {
-            self.pos.0
-                + PARTIAL_PATH_DIST * pos_difference.try_normalized().unwrap_or_else(Vec3::zero)
-        };
         let pos_difference = tgt_pos - self.pos.0;
         let pathing_pos = match path {
             Path::Separate => {
-                let mut sep_vec: Vec3<f32> = Vec3::<f32>::zero();
+                let mut sep_vec: Vec3<f32> = Vec3::zero();
 
                 for entity in read_data
                     .cached_spatial_grid
@@ -118,30 +114,26 @@ impl AgentData<'_> {
                 {
                     if let (Some(alignment), Some(other_alignment)) =
                         (self.alignment, read_data.alignments.get(entity))
+                        && Alignment::passive_towards(*alignment, *other_alignment)
+                        && let (Some(pos), Some(body), Some(other_body)) = (
+                            read_data.positions.get(entity),
+                            self.body,
+                            read_data.bodies.get(entity),
+                        )
                     {
-                        if Alignment::passive_towards(*alignment, *other_alignment) {
-                            if let (Some(pos), Some(body), Some(other_body)) = (
-                                read_data.positions.get(entity),
-                                self.body,
-                                read_data.bodies.get(entity),
-                            ) {
-                                let dist_xy = self.pos.0.xy().distance(pos.0.xy());
-                                let spacing = body.spacing_radius() + other_body.spacing_radius();
-                                if dist_xy < spacing {
-                                    let pos_diff = self.pos.0.xy() - pos.0.xy();
-                                    sep_vec += pos_diff.try_normalized().unwrap_or_else(Vec2::zero)
-                                        * ((spacing - dist_xy) / spacing);
-                                }
-                            }
+                        let dist_xy = self.pos.0.xy().distance(pos.0.xy());
+                        let spacing = body.spacing_radius() + other_body.spacing_radius();
+                        if dist_xy < spacing {
+                            let pos_diff = self.pos.0.xy() - pos.0.xy();
+                            sep_vec += pos_diff.try_normalized().unwrap_or_else(Vec2::zero)
+                                * ((spacing - dist_xy) / spacing);
                         }
                     }
                 }
-                partial_path_tgt_pos(
-                    sep_vec * SEPARATION_BIAS + pos_difference * (1.0 - SEPARATION_BIAS),
-                )
+
+                tgt_pos + sep_vec * SEPARATION_BIAS + pos_difference * (1.0 - SEPARATION_BIAS)
             },
-            Path::Full => tgt_pos,
-            Path::Partial => partial_path_tgt_pos(pos_difference),
+            Path::AtTarget => tgt_pos,
         };
         let speed_multiplier = speed_multiplier.unwrap_or(1.0).min(1.0);
 
@@ -157,7 +149,7 @@ impl AgentData<'_> {
         // then reroute if needed.
         let is_target_loaded = in_loaded_chunk(pathing_pos);
 
-        if let Some((bearing, speed)) = agent.chaser.chase(
+        if let Some((bearing, speed, stuck)) = agent.chaser.chase(
             &*read_data.terrain,
             self.pos.0,
             self.vel.0,
@@ -167,7 +159,9 @@ impl AgentData<'_> {
                 is_target_loaded,
                 ..self.traversal_config
             },
+            &read_data.time,
         ) {
+            self.unstuck_if(stuck, controller);
             self.traverse(controller, bearing, speed * speed_multiplier);
             Some(bearing)
         } else {
@@ -188,10 +182,27 @@ impl AgentData<'_> {
         controller.inputs.move_z = bearing.z;
     }
 
+    pub fn unstuck_if(&self, condition: bool, controller: &mut Controller) {
+        if condition && rng().random_bool(0.05) {
+            if matches!(self.char_state, CharacterState::Climb(_)) || rng().random_bool(0.5) {
+                controller.push_basic_input(InputKind::Jump);
+            } else {
+                controller.push_basic_input(InputKind::Roll);
+            }
+        } else {
+            if controller.queued_inputs.contains_key(&InputKind::Jump) {
+                controller.push_cancel_input(InputKind::Jump);
+            }
+            if controller.queued_inputs.contains_key(&InputKind::Roll) {
+                controller.push_cancel_input(InputKind::Roll);
+            }
+        }
+    }
+
     pub fn jump_if(&self, condition: bool, controller: &mut Controller) {
         if condition {
             controller.push_basic_input(InputKind::Jump);
-        } else {
+        } else if controller.queued_inputs.contains_key(&InputKind::Jump) {
             controller.push_cancel_input(InputKind::Jump)
         }
     }
@@ -222,7 +233,7 @@ impl AgentData<'_> {
         let lantern_turned_on = self.light_emitter.is_some();
         let day_period = DayPeriod::from(read_data.time_of_day.0);
         // Only emit event for agents that have a lantern equipped
-        if lantern_equipped && rng.gen_bool(0.001) {
+        if lantern_equipped && rng.random_bool(0.001) {
             if day_period.is_dark() && !lantern_turned_on {
                 // Agents with turned off lanterns turn them on randomly once it's
                 // nighttime and keep them on.
@@ -281,7 +292,7 @@ impl AgentData<'_> {
                         controller,
                         travel_to,
                         read_data,
-                        Path::Full,
+                        Path::AtTarget,
                         Some(speed_factor),
                     ) {
                         let height_offset = bearing.z
@@ -370,7 +381,7 @@ impl AgentData<'_> {
                     }
 
                     // Put away weapon
-                    if rng.gen_bool(0.1)
+                    if rng.random_bool(0.1)
                         && matches!(
                             read_data.char_states.get(*self.entity),
                             Some(CharacterState::Wielding(_))
@@ -571,7 +582,7 @@ impl AgentData<'_> {
                             controller.inputs.move_dir = Vec2::zero();
                         }
                     }
-                    controller.push_action(ControlAction::Talk);
+                    controller.push_action(ControlAction::Talk(None));
                     break 'activity; // Don't fall through to idle wandering
                 },
                 Some(NpcActivity::Sit(dir, pos)) => {
@@ -597,7 +608,7 @@ impl AgentData<'_> {
                     break 'activity; // Don't fall through to idle wandering
                 },
                 Some(NpcActivity::HuntAnimals) => {
-                    if rng.gen::<f32>() < 0.1 {
+                    if rng.random::<f32>() < 0.1 {
                         self.choose_target(
                             agent,
                             controller,
@@ -609,11 +620,12 @@ impl AgentData<'_> {
                 Some(NpcActivity::Talk(target)) => {
                     if agent.target.is_none()
                         && let Some(target) = read_data.id_maps.actor_entity(target)
+                        && let Some(target_uid) = read_data.uids.get(target)
                     {
                         // We're always aware of someone we're talking to
                         controller.push_action(ControlAction::Stand);
                         self.look_toward(controller, read_data, target);
-                        controller.push_action(ControlAction::Talk);
+                        controller.push_action(ControlAction::Talk(Some(*target_uid)));
                         break 'activity;
                     }
                 },
@@ -638,7 +650,7 @@ impl AgentData<'_> {
 
             // Idle NPCs should try to jump on the shoulders of their owner, sometimes.
             if read_data.is_riders.contains(*self.entity) {
-                if rng.gen_bool(0.0001) {
+                if rng.random_bool(0.0001) {
                     self.dismount_uncontrollable(controller, read_data);
                 } else {
                     break 'activity;
@@ -646,7 +658,7 @@ impl AgentData<'_> {
             } else if let Some(owner_uid) = owner_uid
                 && is_in_range
                 && !is_being_pet
-                && rng.gen_bool(0.01)
+                && rng.random_bool(0.01)
             {
                 controller.push_event(ControlEvent::Mount(*owner_uid));
                 break 'activity;
@@ -697,7 +709,7 @@ impl AgentData<'_> {
                 }
             }
 
-            let diff = Vec2::new(rng.gen::<f32>() - 0.5, rng.gen::<f32>() - 0.5);
+            let diff = Vec2::new(rng.random::<f32>() - 0.5, rng.random::<f32>() - 0.5);
             agent.bearing += (diff * 0.1 - agent.bearing * 0.01)
                 * agent.psyche.idle_wander_factor.max(0.0).sqrt()
                 * agent.psyche.aggro_range_multiplier.max(0.0).sqrt();
@@ -765,7 +777,7 @@ impl AgentData<'_> {
             }
 
             // Put away weapon
-            if rng.gen_bool(0.1)
+            if rng.random_bool(0.1)
                 && matches!(
                     read_data.char_states.get(*self.entity),
                     Some(CharacterState::Wielding(_))
@@ -774,12 +786,12 @@ impl AgentData<'_> {
                 controller.push_action(ControlAction::Unwield);
             }
 
-            if rng.gen::<f32>() < 0.0015 {
+            if rng.random::<f32>() < 0.0015 {
                 controller.push_utterance(UtteranceKind::Calm);
             }
 
             // Sit
-            if rng.gen::<f32>() < 0.0035 {
+            if rng.random::<f32>() < 0.0035 {
                 controller.push_action(ControlAction::Sit);
             }
         }
@@ -794,7 +806,7 @@ impl AgentData<'_> {
     ) {
         self.dismount_uncontrollable(controller, read_data);
 
-        if let Some((bearing, speed)) = agent.chaser.chase(
+        if let Some((bearing, speed, stuck)) = agent.chaser.chase(
             &*read_data.terrain,
             self.pos.0,
             self.vel.0,
@@ -803,7 +815,9 @@ impl AgentData<'_> {
                 min_tgt_dist: AVG_FOLLOW_DIST,
                 ..self.traversal_config
             },
+            &read_data.time,
         ) {
+            self.unstuck_if(stuck, controller);
             let dist_sqrd = self.pos.0.distance_squared(tgt_pos.0);
             self.traverse(
                 controller,
@@ -821,17 +835,16 @@ impl AgentData<'_> {
     ) -> bool {
         if let Some(tgt_pos) = read_data.positions.get(target)
             && !is_steering(*self.entity, read_data)
+            && let Some(dir) = Dir::look_toward(
+                self.pos,
+                self.body,
+                Some(&comp::Scale(self.scale)),
+                tgt_pos,
+                read_data.bodies.get(target),
+                read_data.scales.get(target),
+            )
         {
-            let eye_offset = self.body.map_or(0.0, |b| b.eye_height(self.scale));
-            let tgt_eye_offset = read_data.bodies.get(target).map_or(0.0, |b| {
-                b.eye_height(read_data.scales.get(target).map_or(1.0, |s| s.0))
-            });
-            if let Some(dir) = Dir::from_unnormalized(
-                Vec3::new(tgt_pos.0.x, tgt_pos.0.y, tgt_pos.0.z + tgt_eye_offset)
-                    - Vec3::new(self.pos.0.x, self.pos.0.y, self.pos.0.z + eye_offset),
-            ) {
-                controller.inputs.look_dir = dir;
-            }
+            controller.inputs.look_dir = dir;
             true
         } else {
             false
@@ -850,13 +863,14 @@ impl AgentData<'_> {
 
         self.dismount_uncontrollable(controller, read_data);
 
-        if let Some(body) = self.body {
-            if body.can_strafe() && !self.is_gliding {
-                controller.push_action(ControlAction::Unwield);
-            }
+        if let Some(body) = self.body
+            && body.can_strafe()
+            && !self.is_gliding
+        {
+            controller.push_action(ControlAction::Unwield);
         }
 
-        if let Some((bearing, speed)) = agent.chaser.chase(
+        if let Some((bearing, speed, stuck)) = agent.chaser.chase(
             &*read_data.terrain,
             self.pos.0,
             self.vel.0,
@@ -870,7 +884,9 @@ impl AgentData<'_> {
                 min_tgt_dist: 1.25,
                 ..self.traversal_config
             },
+            &read_data.time,
         ) {
+            self.unstuck_if(stuck, controller);
             self.traverse(controller, bearing, speed.min(MAX_FLEE_SPEED));
         }
     }
@@ -949,27 +965,26 @@ impl AgentData<'_> {
             let mut value = 0.0;
             let mut heal_multiplier_value = 1.0;
 
-            if let ItemKind::Consumable { kind, effects, .. } = &*item.kind() {
-                if matches!(kind, ConsumableKind::Drink)
-                    || (relaxed && matches!(kind, ConsumableKind::Food))
-                {
-                    match effects {
-                        Effects::Any(effects) => {
-                            // Add the average of all effects.
-                            for effect in effects.iter() {
-                                let (add, red) = effect_healing_value(effect);
-                                value += add / effects.len() as f32;
-                                heal_multiplier_value *= 1.0 - red / effects.len() as f32;
-                            }
-                        },
-                        Effects::All(_) | Effects::One(_) => {
-                            for effect in effects.effects() {
-                                let (add, red) = effect_healing_value(effect);
-                                value += add;
-                                heal_multiplier_value *= 1.0 - red;
-                            }
-                        },
-                    }
+            if let ItemKind::Consumable { kind, effects, .. } = &*item.kind()
+                && (matches!(kind, ConsumableKind::Drink)
+                    || (relaxed && matches!(kind, ConsumableKind::Food)))
+            {
+                match effects {
+                    Effects::Any(effects) => {
+                        // Add the average of all effects.
+                        for effect in effects.iter() {
+                            let (add, red) = effect_healing_value(effect);
+                            value += add / effects.len() as f32;
+                            heal_multiplier_value *= 1.0 - red / effects.len() as f32;
+                        }
+                    },
+                    Effects::All(_) | Effects::One(_) => {
+                        for effect in effects.effects() {
+                            let (add, red) = effect_healing_value(effect);
+                            value += add;
+                            heal_multiplier_value *= 1.0 - red;
+                        }
+                    },
                 }
             }
             // Prefer non-potion sources of healing when under at least one stack of potion
@@ -1222,7 +1237,7 @@ impl AgentData<'_> {
         #[cfg(not(feature = "be-dyn-lib"))] rng: &mut impl Rng,
     ) {
         #[cfg(feature = "be-dyn-lib")]
-        let rng = &mut thread_rng();
+        let rng = &mut rng();
 
         self.dismount_uncontrollable(controller, read_data);
 
@@ -2059,46 +2074,44 @@ impl AgentData<'_> {
         emitters: &mut AgentEmitters,
         rng: &mut impl Rng,
     ) {
-        if let Some(Target { target, .. }) = agent.target {
-            if let Some(tgt_health) = read_data.healths.get(target) {
-                if let Some(by) = tgt_health.last_change.damage_by() {
-                    if let Some(attacker) = get_entity_by_id(by.uid(), read_data) {
-                        if agent.target.is_none() {
-                            controller.push_utterance(UtteranceKind::Angry);
-                        }
+        if let Some(Target { target, .. }) = agent.target
+            && let Some(tgt_health) = read_data.healths.get(target)
+            && let Some(by) = tgt_health.last_change.damage_by()
+            && let Some(attacker) = get_entity_by_id(by.uid(), read_data)
+        {
+            if agent.target.is_none() {
+                controller.push_utterance(UtteranceKind::Angry);
+            }
 
-                        let attacker_pos = read_data.positions.get(attacker).map(|pos| pos.0);
-                        agent.target = Some(Target::new(
-                            attacker,
-                            true,
-                            read_data.time.0,
-                            true,
-                            attacker_pos,
-                        ));
+            let attacker_pos = read_data.positions.get(attacker).map(|pos| pos.0);
+            agent.target = Some(Target::new(
+                attacker,
+                true,
+                read_data.time.0,
+                true,
+                attacker_pos,
+            ));
 
-                        if let Some(tgt_pos) = read_data.positions.get(attacker) {
-                            if is_dead_or_invulnerable(attacker, read_data) {
-                                agent.target = Some(Target::new(
-                                    target,
-                                    false,
-                                    read_data.time.0,
-                                    false,
-                                    Some(tgt_pos.0),
-                                ));
+            if let Some(tgt_pos) = read_data.positions.get(attacker) {
+                if is_dead_or_invulnerable(attacker, read_data) {
+                    agent.target = Some(Target::new(
+                        target,
+                        false,
+                        read_data.time.0,
+                        false,
+                        Some(tgt_pos.0),
+                    ));
 
-                                self.idle(agent, controller, read_data, emitters, rng);
-                            } else {
-                                let target_data = TargetData::new(tgt_pos, target, read_data);
-                                // TODO: Reimplement this in rtsim
-                                // if let Some(tgt_name) =
-                                //     read_data.stats.get(target).map(|stats| stats.name.clone())
-                                // {
-                                //     agent.add_fight_to_memory(&tgt_name, read_data.time.0)
-                                // }
-                                self.attack(agent, controller, &target_data, read_data, rng);
-                            }
-                        }
-                    }
+                    self.idle(agent, controller, read_data, emitters, rng);
+                } else {
+                    let target_data = TargetData::new(tgt_pos, target, read_data);
+                    // TODO: Reimplement this in rtsim
+                    // if let Some(tgt_name) =
+                    //     read_data.stats.get(target).map(|stats| stats.name.clone())
+                    // {
+                    //     agent.add_fight_to_memory(&tgt_name, read_data.time.0)
+                    // }
+                    self.attack(agent, controller, &target_data, read_data, rng);
                 }
             }
         }
@@ -2320,7 +2333,7 @@ impl AgentData<'_> {
     }
 
     pub fn can_sense_directly_near(&self, e_pos: &Pos) -> bool {
-        let chance = thread_rng().gen_bool(0.3);
+        let chance = rng().random_bool(0.3);
         e_pos.0.distance_squared(self.pos.0) < 5_f32.powi(2) && chance
     }
 
@@ -2329,30 +2342,34 @@ impl AgentData<'_> {
         agent: &mut Agent,
         controller: &mut Controller,
         target: EcsEntity,
+        tgt_data: &TargetData,
         read_data: &ReadData,
         emitters: &mut AgentEmitters,
-        rng: &mut impl Rng,
         remembers_fight_with_target: bool,
     ) {
         let max_move = 0.5;
         let move_dir = controller.inputs.move_dir;
         let move_dir_mag = move_dir.magnitude();
-        let small_chance = rng.gen::<f32>() < read_data.dt.0 * 0.25;
-        let mut chat = |content: Content| {
+        let mut chat = |agent: &mut Agent, content: Content| {
             self.chat_npc_if_allowed_to_speak(content, agent, emitters);
         };
-        let mut chat_villager_remembers_fighting = || {
+        let mut chat_villager_remembers_fighting = |agent: &mut Agent| {
             let tgt_name = read_data.stats.get(target).map(|stats| stats.name.clone());
 
             // TODO: Localise
             // Is this thing even used??
             if let Some(tgt_name) = tgt_name.as_ref().and_then(|name| name.as_plain()) {
-                chat(Content::localized_with_args(
-                    "npc-speech-remembers-fight",
-                    [("name", tgt_name)],
-                ))
+                chat(
+                    agent,
+                    Content::localized_with_args("npc-speech-remembers-fight", [(
+                        "name", tgt_name,
+                    )]),
+                )
             } else {
-                chat(Content::localized("npc-speech-remembers-fight-no-name"));
+                chat(
+                    agent,
+                    Content::localized("npc-speech-remembers-fight-no-name"),
+                );
             }
         };
 
@@ -2363,23 +2380,47 @@ impl AgentData<'_> {
             controller.inputs.move_dir = max_move * move_dir / move_dir_mag;
         }
 
-        if small_chance {
-            controller.push_utterance(UtteranceKind::Angry);
-            if is_villager(self.alignment) {
-                if remembers_fight_with_target {
-                    chat_villager_remembers_fighting();
-                } else if is_dressed_as_cultist(target, read_data) {
-                    chat(Content::localized("npc-speech-villager_cultist_alarm"));
-                } else if is_dressed_as_witch(target, read_data) {
-                    chat(Content::localized("npc-speech-villager_witch_alarm"));
-                } else if is_dressed_as_pirate(target, read_data) {
-                    chat(Content::localized("npc-speech-villager_pirate_alarm"));
+        match agent
+            .timer
+            .timeout_elapsed(read_data.time.0, comp::agent::TimerAction::Warn, 5.0)
+        {
+            Some(true) | None => {
+                self.path_toward_target(
+                    agent,
+                    controller,
+                    tgt_data.pos.0,
+                    read_data,
+                    Path::AtTarget,
+                    Some(0.4),
+                );
+            },
+            Some(false) => {
+                agent
+                    .timer
+                    .start(read_data.time.0, comp::agent::TimerAction::Warn);
+                controller.push_utterance(UtteranceKind::Angry);
+                if is_villager(self.alignment) {
+                    if remembers_fight_with_target {
+                        chat_villager_remembers_fighting(agent);
+                    } else if is_dressed_as_cultist(target, read_data) {
+                        chat(
+                            agent,
+                            Content::localized("npc-speech-villager_cultist_alarm"),
+                        );
+                    } else if is_dressed_as_witch(target, read_data) {
+                        chat(agent, Content::localized("npc-speech-villager_witch_alarm"));
+                    } else if is_dressed_as_pirate(target, read_data) {
+                        chat(
+                            agent,
+                            Content::localized("npc-speech-villager_pirate_alarm"),
+                        );
+                    } else {
+                        chat(agent, Content::localized("npc-speech-menacing"));
+                    }
                 } else {
-                    chat(Content::localized("npc-speech-menacing"));
+                    chat(agent, Content::localized("npc-speech-menacing"));
                 }
-            } else {
-                chat(Content::localized("npc-speech-menacing"));
-            }
+            },
         }
     }
 

@@ -83,6 +83,7 @@ pub trait ModelEntryFuture<const N: usize> {
 }
 
 /// A future FigureModelEntryLod.
+#[expect(clippy::large_enum_variant)]
 pub enum FigureModelEntryFuture<const N: usize> {
     /// We can poll the future to see whether the figure model is ready.
     // TODO: See if we can find away to either get rid of this Arc, or reuse Arcs across different
@@ -111,6 +112,7 @@ impl<const N: usize> ModelEntryFuture<N> for FigureModelEntryFuture<N> {
 }
 
 /// A future TerrainModelEntryLod.
+#[expect(clippy::large_enum_variant)]
 pub enum TerrainModelEntryFuture<const N: usize> {
     /// We can poll the future to see whether the figure model is ready.
     // TODO: See if we can find away to either get rid of this Arc, or reuse Arcs across different
@@ -198,9 +200,10 @@ pub struct CharacterCacheKey {
     pub(super) tool: Option<CharacterToolKey>,
     pub(super) lantern: Option<String>,
     pub(super) glider: Option<String>,
-    pub(super) hand: Option<String>,
     pub(super) foot: Option<String>,
     pub(super) head: Option<String>,
+    // None = invisible, Some(None) = no armour
+    pub(super) hand: Option<Option<String>>,
 }
 
 impl CharacterCacheKey {
@@ -239,6 +242,10 @@ impl CharacterCacheKey {
             // TODO: Figure out what to do here, and/or refactor how this works.
             .unwrap_or(false);
 
+        // When in first-person, hide our hands to make aiming a bow easier
+        // TODO: Make this less of a hack
+        let are_hands_visible = !is_first_person || cs.map(|cs| !cs.is_ranged()).unwrap_or(true);
+
         Self {
             // Third person armor is only modeled when the camera mode is not first person.
             third_person: if is_first_person {
@@ -276,9 +283,13 @@ impl CharacterCacheKey {
             },
             lantern: key_from_slot(EquipSlot::Lantern),
             glider: key_from_slot(EquipSlot::Glider),
-            hand: key_from_slot(EquipSlot::Armor(ArmorSlot::Hands)),
             foot: key_from_slot(EquipSlot::Armor(ArmorSlot::Feet)),
             head: key_from_slot(EquipSlot::Armor(ArmorSlot::Head)),
+            hand: if are_hands_visible {
+                Some(key_from_slot(EquipSlot::Armor(ArmorSlot::Hands)))
+            } else {
+                None
+            },
         }
     }
 }
@@ -369,15 +380,13 @@ where
         <Skel::Body as BodySpec>::Spec: Clone,
     {
         // TODO: Don't hard-code this.
-        if tick % 60 == 0 {
+        if tick.is_multiple_of(60) {
             self.models.retain(|_, ((model_entry, _), last_used)| {
                 // Wait about a minute at 60 fps before invalidating old models.
                 let delta = 60 * 60;
                 let alive = *last_used + delta > tick;
-                if !alive {
-                    if let Some(model_entry) = model_entry.get_done() {
-                        atlas.allocator.deallocate(model_entry.allocation().id);
-                    }
+                if !alive && let Some(model_entry) = model_entry.get_done() {
+                    atlas.allocator.deallocate(model_entry.allocation().id);
                 }
                 alive
             });

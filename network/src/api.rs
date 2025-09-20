@@ -155,7 +155,7 @@ pub enum StreamError {
     StreamClosed,
     #[cfg(feature = "compression")]
     Compression(DecodeError),
-    Deserialize(bincode::Error),
+    Deserialize(Box<bincode::error::DecodeError>),
 }
 
 /// All Parameters of a Stream, can be used to generate RawMessages
@@ -520,11 +520,11 @@ impl Network {
         if let Err(()) = shutdown_scheduler_s.send(()) {
             error!("Scheduler is closed, but nobody other should be able to close it")
         };
-        if let Ok(return_s) = return_s {
-            if return_s.send(()).is_err() {
-                warn!("Network::drop stopped after a timeout and didn't wait for our shutdown");
-            };
-        }
+        if let Ok(return_s) = return_s
+            && return_s.send(()).is_err()
+        {
+            warn!("Network::drop stopped after a timeout and didn't wait for our shutdown");
+        };
         debug!("Network has shut down");
     }
 }
@@ -1298,8 +1298,8 @@ impl From<io::Error> for NetworkError {
     fn from(_err: io::Error) -> Self { NetworkError::NetworkClosed }
 }
 
-impl From<Box<bincode::ErrorKind>> for StreamError {
-    fn from(err: Box<bincode::ErrorKind>) -> Self { StreamError::Deserialize(err) }
+impl From<Box<bincode::error::DecodeError>> for StreamError {
+    fn from(err: Box<bincode::error::DecodeError>) -> Self { StreamError::Deserialize(err) }
 }
 
 impl core::fmt::Display for StreamError {

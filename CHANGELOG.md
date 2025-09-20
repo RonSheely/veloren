@@ -40,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added fire gigas.
 - Consumables drop their container after getting consumed.
 - Added separate settings to toggle rain effects.
-- One new overworld track.
 - Pirates sometimes going to raid towns.
 - Croatian language support.
 - Made space for airship travel agent at docks.
@@ -48,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New hide lineage armor set known as Serpentscale.
 - Added more varieties of house-building materials
 - New LoD models for all five AirshipDock plots.
+- Structures now support a `Choice()` block to allow for randomized spawns.
+- Added `DiscardTransparency` experimental shader.
+- Added Minimap options for Scale, Show Coordinates and Colored Player Marker.
+- Simple quest system
+- Quest: Escort a merchant
+- Quest: Slay a monster
+- Add separate wall jump button
 
 ### Changed
 
@@ -102,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Increased gem spawn rates in caves; each gem node has a specific biome in which they generate more frequently.
 - Cliff town airship docks now have extra space around the dock to preclude taller cliff buildings from interferring.
 - Collars now require 2 tin ingots instead of an iron ingot, and their quality attribute has been changed to common instead of moderate.
+- Barns can spawn some items.
+- Significantly increased the frequency/number of recipes dropped from dungeon chests.
 
 ### Removed
 
@@ -141,6 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed agents spamming healing items, causing them not to heal.
 - Fixed agents not picking up their items.
 - Fixed the issue where cliff town airship docks were sometimes missing.
+- Elusive bridge trolls are no longer at risk spawning in terrain.
+- Npc pathing.
+- More beds heal
 
 ## [0.17.0] - 2024-12-28
 

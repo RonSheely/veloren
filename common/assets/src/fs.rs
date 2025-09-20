@@ -24,12 +24,7 @@ impl FileSystem {
         });
 
         let canary = fs::read_to_string(super::ASSETS_PATH.join("common").join("canary.canary"))
-            .map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("failed to load canary asset: {}", e),
-                )
-            })?;
+            .map_err(|e| io::Error::other(format!("failed to load canary asset: {}", e)))?;
 
         if !canary.starts_with("VELOREN_CANARY_MAGIC") {
             panic!("Canary asset `canary.canary` was present but did not contain the expected data. This *heavily* implies that you've not correctly set up Git LFS (Large File Storage). Visit `https://book.veloren.net/contributors/development-tools.html#git-lfs` for more information about setting up Git LFS.");
@@ -43,7 +38,7 @@ impl FileSystem {
 }
 
 impl Source for FileSystem {
-    fn read(&self, id: &str, ext: &str) -> io::Result<FileContent> {
+    fn read(&self, id: &str, ext: &str) -> io::Result<FileContent<'_>> {
         if let Some(dir) = &self.override_dir {
             match dir.read(id, ext) {
                 Ok(content) => return Ok(content),
@@ -91,8 +86,6 @@ impl Source for FileSystem {
             .is_some_and(|dir| dir.exists(entry))
             || self.default.exists(entry)
     }
-
-    fn make_source(&self) -> Option<Box<dyn Source + Send>> { Some(Box::new(self.clone())) }
 
     fn configure_hot_reloading(&self, events: EventSender) -> Result<(), BoxedError> {
         let mut builder = FsWatcherBuilder::new()?;

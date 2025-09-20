@@ -24,7 +24,7 @@ use common::{
 };
 use core::time::Duration;
 use portpicker::pick_unused_port;
-use rand::prelude::SliceRandom;
+use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::Display,
@@ -157,16 +157,13 @@ impl Default for ModerationSettings {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub enum CalendarMode {
     None,
+    #[default]
     Auto,
     Timezone(chrono_tz::Tz),
     Events(Vec<CalendarEvent>),
-}
-
-impl Default for CalendarMode {
-    fn default() -> Self { Self::Auto }
 }
 
 impl CalendarMode {
@@ -408,7 +405,8 @@ impl EditableSettings {
             "A whole world to yourself! Time to stretch...",
             "How's the serenity?",
         ]
-        .choose(&mut rand::thread_rng())
+        .iter()
+        .choose(&mut rand::rng())
         .expect("Message of the day don't wanna play.");
 
         let mut server_description = ServerDescriptions::default();
