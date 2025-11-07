@@ -1022,15 +1022,19 @@ impl ParticleMgr {
         let dt = scene_data.state.get_delta_time();
         let mut rng = rand::rng();
 
-        for _ in 0..self.scheduler.heartbeats(Duration::from_millis(50)) {
+        for _ in 0..self.scheduler.heartbeats(Duration::from_millis(25)) {
             self.particles.push(Particle::new(
-                Duration::from_millis(250),
+                Duration::from_millis(800),
                 time,
                 ParticleMode::CampfireFire,
-                pos,
+                pos + Vec2::broadcast(())
+                    .map(|_| rand::rng().random_range(-0.3..0.3))
+                    .with_z(0.1),
                 scene_data,
             ));
+        }
 
+        for _ in 0..self.scheduler.heartbeats(Duration::from_millis(50)) {
             self.particles.push(Particle::new(
                 Duration::from_secs(10),
                 time,
@@ -1089,7 +1093,8 @@ impl ParticleMgr {
                 Duration::from_millis(500),
                 time,
                 ParticleMode::CampfireFire,
-                pos,
+                pos.map(|e| e + rng.random_range(-0.25..0.25))
+                    + vel.map_or(Vec3::zero(), |v| -v.0 * dt * rng.random::<f32>()),
                 scene_data,
             ));
             self.particles.push(Particle::new(
@@ -1531,6 +1536,70 @@ impl ParticleMgr {
                                                 interpolated
                                                     .pos
                                                     .map(|e| e + rng.random_range(-0.25..0.25)),
+                                                scene_data,
+                                            )
+                                        },
+                                    );
+                                }
+                            },
+                            states::rapid_melee::FrontendSpecifier::ElephantVacuum => {
+                                if matches!(c.stage_section, StageSection::Action) {
+                                    let time = scene_data.state.get_time();
+                                    let mut rng = rand::rng();
+
+                                    let (end_radius, max_range) =
+                                        if let CharacterState::RapidMelee(data) = character_state {
+                                            let max_range =
+                                                data.static_data.melee_constructor.range;
+                                            (
+                                                max_range
+                                                    * (data.static_data.melee_constructor.angle
+                                                        / 2.0
+                                                        * PI
+                                                        / 180.0)
+                                                        .tan(),
+                                                max_range,
+                                            )
+                                        } else {
+                                            (0.0, 0.0)
+                                        };
+                                    let ori = ori.look_vec();
+                                    let body_radius = body.max_radius() * 1.4;
+                                    let body_offsets_z = body.height() * 0.4;
+                                    let beam_offsets = Vec3::new(
+                                        body_radius * ori.x * 1.1,
+                                        body_radius * ori.y * 1.1,
+                                        body_offsets_z,
+                                    );
+
+                                    let (from, to) = (Vec3::<f32>::unit_z(), ori);
+                                    let m = Mat3::<f32>::rotation_from_to_3d(from, to);
+
+                                    self.particles.resize_with(
+                                        self.particles.len()
+                                            + 5
+                                            + usize::from(
+                                                self.scheduler.heartbeats(Duration::from_millis(5)),
+                                            ),
+                                        || {
+                                            let trunk_pos = interpolated.pos + beam_offsets;
+
+                                            let range = rng.random_range(0.05..=max_range);
+                                            let radius = rng
+                                                .random_range(0.0..=end_radius * range / max_range);
+                                            let theta = rng.random_range(0.0..2.0 * PI);
+
+                                            Particle::new_directed(
+                                                Duration::from_millis(300),
+                                                time,
+                                                ParticleMode::ElephantVacuum,
+                                                trunk_pos
+                                                    + m * Vec3::new(
+                                                        radius * theta.cos(),
+                                                        radius * theta.sin(),
+                                                        range,
+                                                    ),
+                                                trunk_pos,
                                                 scene_data,
                                             )
                                         },
@@ -2847,8 +2916,8 @@ impl ParticleMgr {
             BlockParticles {
                 blocks: |boi| BlockParticleSlice::Positions(&boi.fires),
                 range: 2,
-                rate: 20.0,
-                lifetime: 0.25,
+                rate: 50.0,
+                lifetime: 0.5,
                 mode: ParticleMode::CampfireFire,
                 cond: |_| true,
             },
@@ -3723,7 +3792,7 @@ fn default_cache(renderer: &mut Renderer) -> HashMap<&'static str, Model<Particl
         let max_size = Vec2::from(u16::try_from(max_texture_size).unwrap_or(u16::MAX));
         let mut greedy = GreedyMesh::new(max_size, crate::mesh::greedy::general_config());
 
-        let segment = Segment::from_vox_model_index(&vox.read().0, 0);
+        let segment = Segment::from_vox_model_index(&vox.read().0, 0, None);
         let segment_size = segment.size();
         let mut mesh = generate_mesh_base_vol_particle(segment, &mut greedy).0;
         // Center particle vertices around origin
