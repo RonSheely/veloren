@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - More and improved fire particle effects
 - Added Cloth Armor Lineage helmets and new Cotton Armor Set.
 - New glider for Fire Gigas crafting drop.
+- Support for directional lanterns
+- Rebind controller buttons in-game.
 
 ### Changed
 
@@ -118,6 +120,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Minimum camera clamp angle is now 0 degrees.
 - Sprite and entity materials have been overhauled and improved
 - Cloth Armor Lineage model updates.
+- Removed bloodsteel ingots from Vampire Castle mini-boss loot.
+- Chest and mining drops now have a shorter ownership timeout.
+- Tweaked attack timings and orientation rates for a variety of entities.
+- Builds for Linux are now with compressed debuginfo, this should reduce the size of the game on disk.
+- Changed default controller controls.
 
 ### Removed
 

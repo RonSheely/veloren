@@ -5,14 +5,14 @@ use specs::{
     Write, WriteStorage, join::Join, shred,
 };
 use tracing::{debug, error, warn};
-use vek::{Rgb, Vec3};
+use vek::*;
 
 use common::{
     comp::{
         self, InventoryUpdate, LootOwner, PickupItem,
         group::members,
-        item::{self, MaterialStatManifest, flatten_counted_items, tool::AbilityMap},
-        loot_owner::LootOwnerKind,
+        item::{self, Lantern, MaterialStatManifest, flatten_counted_items, tool::AbilityMap},
+        loot_owner::{LootOwnerKind, ONWERSHIP_TIMEOUT_FAST, ONWERSHIP_TIMEOUT_SLOW},
         slot::{self, Slot},
     },
     consts::MAX_PICKUP_RANGE,
@@ -46,11 +46,13 @@ pub(super) fn register_event_systems(builder: &mut DispatcherBuilder) {
 pub fn swap_lantern(
     storage: &mut WriteStorage<LightEmitter>,
     entity: EcsEntity,
-    (lantern_color, lantern_strength): (Rgb<f32>, f32),
+    lantern_info: Lantern,
 ) {
     if let Some(mut light) = storage.get_mut(entity) {
-        light.strength = lantern_strength;
-        light.col = lantern_color;
+        light.strength = lantern_info.strength();
+        light.flicker = lantern_info.flicker();
+        light.col = lantern_info.color();
+        light.dir = lantern_info.dir;
     }
 }
 
@@ -522,7 +524,11 @@ impl ServerEvent for InventoryManipEvent {
                             vel: comp::Vel(Vec3::zero()),
                             ori: data.orientations.get(entity).copied().unwrap_or_default(),
                             item: PickupItem::new(item, *data.program_time, true),
-                            loot_owner: Some(LootOwner::new(LootOwnerKind::Player(*uid), false)),
+                            loot_owner: Some(LootOwner::new(
+                                LootOwnerKind::Player(*uid),
+                                false,
+                                ONWERSHIP_TIMEOUT_FAST,
+                            )),
                         });
                     }
                 },
@@ -537,7 +543,8 @@ impl ServerEvent for InventoryManipEvent {
                                 inventory.get(slot).map_or((false, None), |i| {
                                     let kind = i.kind();
                                     let is_equippable = kind.is_equippable();
-                                    let lantern_info = match_some!(&*kind, ItemKind::Lantern(l) => (l.color(), l.strength()));
+                                    let lantern_info =
+                                        match_some!(&*kind, ItemKind::Lantern(l) => *l);
                                     (is_equippable, lantern_info)
                                 });
                             if is_equippable {
@@ -796,9 +803,9 @@ impl ServerEvent for InventoryManipEvent {
                         // Slot::Equip add more cases if needed
                         (Slot::Equip(slot::EquipSlot::Lantern), Slot::Inventory(slot))
                         | (Slot::Inventory(slot), Slot::Equip(slot::EquipSlot::Lantern)) => {
-                            inventory.get(slot).and_then(|i| {
-                                match_some!(&*i.kind(), ItemKind::Lantern(l) => (l.color(), l.strength()))
-                            })
+                            inventory
+                                .get(slot)
+                                .and_then(|i| match_some!(&*i.kind(), ItemKind::Lantern(l) => *l))
                         },
                         _ => None,
                     } {
@@ -1166,7 +1173,11 @@ impl ServerEvent for InventoryManipEvent {
                 vel: comp::Vel::default(),
                 ori,
                 item,
-                loot_owner: Some(LootOwner::new(LootOwnerKind::Player(owner), true)),
+                loot_owner: Some(LootOwner::new(
+                    LootOwnerKind::Player(owner),
+                    true,
+                    ONWERSHIP_TIMEOUT_SLOW,
+                )),
             })
         }
     }

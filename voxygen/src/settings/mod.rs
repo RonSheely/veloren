@@ -9,7 +9,7 @@ use tracing::warn;
 pub mod audio;
 pub mod chat;
 pub mod control;
-pub mod gamepad;
+pub mod controller;
 pub mod gameplay;
 pub mod graphics;
 pub mod interface;
@@ -20,7 +20,7 @@ pub mod networking;
 pub use audio::{AudioOutput, AudioSettings};
 pub use chat::ChatSettings;
 pub use control::ControlSettings;
-pub use gamepad::GamepadSettings;
+pub use controller::{Button, ControllerSettings};
 pub use gameplay::GameplaySettings;
 pub use graphics::{Fps, GraphicsSettings, get_fps};
 pub use interface::InterfaceSettings;
@@ -35,6 +35,7 @@ pub use networking::NetworkingSettings;
 pub struct Settings {
     pub chat: ChatSettings,
     pub controls: ControlSettings,
+    pub controller: ControllerSettings,
     pub interface: InterfaceSettings,
     pub gameplay: GameplaySettings,
     pub networking: NetworkingSettings,
@@ -46,7 +47,6 @@ pub struct Settings {
     pub logon_commands: Vec<String>,
     pub language: LanguageSettings,
     pub screenshots_path: PathBuf,
-    pub controller: GamepadSettings,
     pub inventory: InventorySettings,
 }
 
@@ -72,6 +72,7 @@ impl Default for Settings {
         Settings {
             chat: ChatSettings::default(),
             controls: ControlSettings::default(),
+            controller: ControllerSettings::default(),
             interface: InterfaceSettings::default(),
             gameplay: GameplaySettings::default(),
             networking: NetworkingSettings::default(),
@@ -82,7 +83,6 @@ impl Default for Settings {
             logon_commands: Vec::new(),
             language: LanguageSettings::default(),
             screenshots_path,
-            controller: GamepadSettings::default(),
             inventory: InventorySettings::default(),
         }
     }
@@ -92,27 +92,10 @@ impl Settings {
     pub fn load(config_dir: &Path) -> Self {
         let path = Self::get_path(config_dir);
 
-        if let Ok(file) = fs::File::open(&path) {
-            match ron::de::from_reader::<_, Self>(file) {
-                Ok(s) => return s,
-                Err(e) => {
-                    warn!(?e, "Failed to parse setting file! Fallback to default.");
-                    // Rename the corrupted settings file
-                    let mut new_path = path.to_owned();
-                    new_path.pop();
-                    new_path.push("settings.invalid.ron");
-                    if let Err(e) = fs::rename(&path, &new_path) {
-                        warn!(?e, ?path, ?new_path, "Failed to rename settings file.");
-                    }
-                },
-            }
-        }
-        // This is reached if either:
-        // - The file can't be opened (presumably it doesn't exist)
-        // - Or there was an error parsing the file
-        let default_settings = Self::default();
-        default_settings.save_to_file_warn(config_dir);
-        default_settings
+        let settings = common::util::ron_from_path_recoverable::<Self>(&path);
+        // Save settings to add new fields or create the file if it is not already there
+        settings.save_to_file_warn(config_dir);
+        settings
     }
 
     pub fn save_to_file_warn(&self, config_dir: &Path) {
