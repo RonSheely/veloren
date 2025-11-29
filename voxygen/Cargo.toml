@@ -108,7 +108,7 @@ clap = { workspace = true }
 # Utility
 backtrace = "0.3.40"
 chrono = { workspace = true }
-chumsky = "0.10"
+chumsky = "0.11"
 crossbeam-utils = { workspace = true }
 crossbeam-channel = { workspace = true }
 directories-next = "2.0"
@@ -131,7 +131,7 @@ rand_chacha = { workspace = true }
 rayon = { workspace = true }
 ron = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
-serde_with = { version = "3.11.0", features = ["hashbrown_0_15"] }
+serde_with = { version = "3", features = ["hashbrown_0_16"] }
 slab = { workspace = true }
 strum = { workspace = true }
 tracing = { workspace = true }
@@ -156,11 +156,7 @@ dispatch = "0.2"
 winres = "0.1"
 
 [target.'cfg(target_family = "windows")'.dependencies]
-# Pinned due to a memory leak on Windows occuring in versions 0.1.44
-# to 0.1.46 of mimalloc and versions 0.1.40 to 0.1.42 of libmimalloc-sys
-# respectively.
-mimalloc = "=0.1.43"
-libmimalloc-sys = "=0.1.39"
+mimalloc = { workspace = true }
 
 # Mumble
 [target.'cfg(not(target_os="macos"))'.dependencies]
